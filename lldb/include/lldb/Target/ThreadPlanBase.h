@@ -41,7 +41,7 @@ public:
 protected:
   bool DoWillResume(lldb::StateType resume_state, bool current_plan) override;
   bool DoPlanExplainsStop(Event *event_ptr) override;
-  ThreadPlanBase(Thread &thread);
+  ThreadPlanBase(Thread &thread, bool use_for_tracing);
 
 private:
   friend lldb::ThreadPlanSP

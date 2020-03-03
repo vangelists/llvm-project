@@ -25,7 +25,8 @@ using namespace lldb_private;
 
 RegisterContext::RegisterContext(Thread &thread, uint32_t concrete_frame_idx)
     : m_thread(thread), m_concrete_frame_idx(concrete_frame_idx),
-      m_stop_id(thread.GetProcess()->GetStopID()) {}
+      m_stop_id(thread.GetProcess()->GetStopID()),
+      m_recorded_register_values() {}
 
 RegisterContext::~RegisterContext() = default;
 
@@ -405,6 +406,15 @@ bool RegisterContext::ReadAllRegisterValues(
 bool RegisterContext::WriteAllRegisterValues(
     const lldb_private::RegisterCheckpoint &reg_checkpoint) {
   return WriteAllRegisterValues(reg_checkpoint.GetData());
+}
+
+RegisterValue &
+RegisterContext::GetRecordedRegisterValue(std::size_t register_id) {
+  if (m_recorded_register_values.empty()) {
+    m_recorded_register_values =
+        m_thread.GetRecordedRegisterValuesForStackFrame(m_concrete_frame_idx);
+  }
+  return m_recorded_register_values[register_id];
 }
 
 TargetSP RegisterContext::CalculateTarget() {

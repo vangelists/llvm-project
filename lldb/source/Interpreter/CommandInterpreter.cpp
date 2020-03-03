@@ -284,6 +284,139 @@ void CommandInterpreter::Initialize() {
     AddAlias("finish", cmd_obj_sp);
   }
 
+  cmd_obj_sp = GetCommandSPExact("thread tracing start", false);
+  if (cmd_obj_sp) {
+    AddAlias("record-start", cmd_obj_sp);
+    AddAlias("rec-start", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread tracing stop", false);
+  if (cmd_obj_sp) {
+    AddAlias("record-stop", cmd_obj_sp);
+    AddAlias("rec-stop", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread tracing suspend", false);
+  if (cmd_obj_sp) {
+    AddAlias("record-suspend", cmd_obj_sp);
+    AddAlias("rec-suspend", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread tracing resume", false);
+  if (cmd_obj_sp) {
+    AddAlias("record-resume", cmd_obj_sp);
+    AddAlias("rec-resume", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread tracing current-tracepoint", false);
+  if (cmd_obj_sp) {
+    AddAlias("current-tracepoint", cmd_obj_sp);
+    AddAlias("ct", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread tracing bookmark", false);
+  if (cmd_obj_sp) {
+    AddAlias("bookmark", cmd_obj_sp);
+    AddAlias("bm", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread step-back", false);
+  if (cmd_obj_sp) {
+    AddAlias("step-back", cmd_obj_sp);
+    AddAlias("sb", cmd_obj_sp);
+    AddAlias("previous", cmd_obj_sp);
+    AddAlias("prev", cmd_obj_sp);
+    AddAlias("ps", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread step-back-inst", false);
+  if (cmd_obj_sp) {
+    AddAlias("step-back-inst", cmd_obj_sp);
+    AddAlias("sbi", cmd_obj_sp);
+    AddAlias("previous-instruction", cmd_obj_sp);
+    AddAlias("prev-inst", cmd_obj_sp);
+    AddAlias("pi", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread step-back-until-address", false);
+  if (cmd_obj_sp) {
+    AddAlias("step-back-until-address", cmd_obj_sp);
+    AddAlias("previous-address", cmd_obj_sp);
+    AddAlias("pa", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread step-back-until-line", false);
+  if (cmd_obj_sp) {
+    AddAlias("step-back-until-line", cmd_obj_sp);
+    AddAlias("previous-line", cmd_obj_sp);
+    AddAlias("pl", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread step-back-until-out", false);
+  if (cmd_obj_sp) {
+    AddAlias("step-back-until-out", cmd_obj_sp);
+    AddAlias("sbo", cmd_obj_sp);
+    AddAlias("previous-function", cmd_obj_sp);
+    AddAlias("prev-func", cmd_obj_sp);
+    AddAlias("pf", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread step-back-until-start", false);
+  if (cmd_obj_sp) {
+    AddAlias("step-back-until-start", cmd_obj_sp);
+    AddAlias("sbs", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread continue-reverse", false);
+  if (cmd_obj_sp) {
+    AddAlias("continue-reverse", cmd_obj_sp);
+    AddAlias("cr", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread replay", false);
+  if (cmd_obj_sp) {
+    AddAlias("replay", cmd_obj_sp);
+    AddAlias("rs", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread replay-inst", false);
+  if (cmd_obj_sp) {
+    AddAlias("replay-instruction", cmd_obj_sp);
+    AddAlias("replay-inst", cmd_obj_sp);
+    AddAlias("ri", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread replay-until-address", false);
+  if (cmd_obj_sp) {
+    AddAlias("replay-until-address", cmd_obj_sp);
+    AddAlias("ra", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread replay-until-line", false);
+  if (cmd_obj_sp) {
+    AddAlias("replay-until-line", cmd_obj_sp);
+    AddAlias("rl", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread replay-until-out", false);
+  if (cmd_obj_sp) {
+    AddAlias("replay-until-out", cmd_obj_sp);
+    AddAlias("replay-function", cmd_obj_sp);
+    AddAlias("rf", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread replay-until-end", false);
+  if (cmd_obj_sp) {
+    AddAlias("replay-until-end", cmd_obj_sp);
+    AddAlias("rend", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread replay-continue", false);
+  if (cmd_obj_sp) {
+    AddAlias("replay-continue", cmd_obj_sp);
+    AddAlias("rc", cmd_obj_sp);
+  }
+
   cmd_obj_sp = GetCommandSPExact("frame select", false);
   if (cmd_obj_sp) {
     AddAlias("f", cmd_obj_sp);

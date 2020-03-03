@@ -9,6 +9,8 @@
 #ifndef LLDB_TARGET_REGISTERCONTEXT_H
 #define LLDB_TARGET_REGISTERCONTEXT_H
 
+#include <unordered_map>
+
 #include "lldb/Target/ExecutionContextScope.h"
 #include "lldb/lldb-private.h"
 
@@ -17,6 +19,8 @@ namespace lldb_private {
 class RegisterContext : public std::enable_shared_from_this<RegisterContext>,
                         public ExecutionContextScope {
 public:
+  using RegisterValues = std::unordered_map<std::size_t, RegisterValue>;
+
   // Constructors and Destructors
   RegisterContext(Thread &thread, uint32_t concrete_frame_idx);
 
@@ -70,6 +74,8 @@ public:
       const lldb_private::RegisterCheckpoint &reg_checkpoint);
 
   bool CopyFromRegisterContext(lldb::RegisterContextSP context);
+
+  RegisterValue &GetRecordedRegisterValue(std::size_t register_id);
 
   /// Convert from a given register numbering scheme to the lldb register
   /// numbering scheme
@@ -199,6 +205,9 @@ protected:
   uint32_t m_concrete_frame_idx; // The concrete frame index for this register
                                  // context
   uint32_t m_stop_id; // The stop ID that any data in this context is valid for
+  RegisterValues m_recorded_register_values; // Holds the recorded register
+                                             // values for this frame when
+                                             // thread tracing is enabled.
 private:
   // For RegisterContext only
   DISALLOW_COPY_AND_ASSIGN(RegisterContext);

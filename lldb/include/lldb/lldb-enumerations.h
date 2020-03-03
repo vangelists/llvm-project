@@ -577,6 +577,8 @@ enum CommandArgumentType {
   eArgTypeThreadID,
   eArgTypeThreadIndex,
   eArgTypeThreadName,
+  eArgTypeTracepointID,
+  eArgTypeTracepointName,
   eArgTypeTypeName,
   eArgTypeUnsignedInteger,
   eArgTypeUnixSignal,

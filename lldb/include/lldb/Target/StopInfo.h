@@ -140,10 +140,11 @@ public:
                          lldb::addr_t *crashing_address = nullptr);
 
 protected:
+  friend class ThreadPlanInstructionTracer;
+
   // Perform any action that is associated with this stop.  This is done as the
   // Event is removed from the event queue.  ProcessEventData::DoOnRemoval does
   // the job.
-
   virtual void PerformAction(Event *event_ptr) {}
 
   virtual bool DoShouldNotify(Event *event_ptr) { return false; }

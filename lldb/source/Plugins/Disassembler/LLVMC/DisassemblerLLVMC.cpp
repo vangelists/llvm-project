@@ -61,6 +61,7 @@ public:
   bool CanBranch(llvm::MCInst &mc_inst) const;
   bool HasDelaySlot(llvm::MCInst &mc_inst) const;
   bool IsCall(llvm::MCInst &mc_inst) const;
+  bool MayStore(llvm::MCInst &mc_inst) const;
 
 private:
   MCDisasmInstance(std::unique_ptr<llvm::MCInstrInfo> &&instr_info_up,
@@ -806,6 +807,11 @@ public:
     return m_is_call;
   }
 
+  bool MayStore() override {
+    VisitInstruction();
+    return m_may_store;
+  }
+
 protected:
   std::weak_ptr<DisassemblerLLVMC> m_disasm_wp;
 
@@ -817,9 +823,11 @@ protected:
   //   - Might branch
   //   - Does not have a delay slot
   //   - Is not a call
+  //   - Does not modify memory
   bool m_does_branch = true;
   bool m_has_delay_slot = false;
   bool m_is_call = false;
+  bool m_may_store = false;
 
   void VisitInstruction() {
     if (m_has_visited_instruction)
@@ -849,6 +857,7 @@ protected:
     m_does_branch = mc_disasm_ptr->CanBranch(inst);
     m_has_delay_slot = mc_disasm_ptr->HasDelaySlot(inst);
     m_is_call = mc_disasm_ptr->IsCall(inst);
+    m_may_store = mc_disasm_ptr->MayStore(inst);
   }
 
 private:
@@ -1026,6 +1035,11 @@ bool DisassemblerLLVMC::MCDisasmInstance::IsCall(llvm::MCInst &mc_inst) const {
   return m_instr_info_up->get(mc_inst.getOpcode()).isCall();
 }
 
+bool DisassemblerLLVMC::MCDisasmInstance::MayStore(
+    llvm::MCInst &mc_inst) const {
+  return m_instr_info_up->get(mc_inst.getOpcode()).mayStore();
+}
+
 DisassemblerLLVMC::DisassemblerLLVMC(const ArchSpec &arch,
                                      const char *flavor_string)
     : Disassembler(arch, flavor_string), m_exe_ctx(nullptr), m_inst(nullptr),
@@ -1139,7 +1153,7 @@ DisassemblerLLVMC::DisassemblerLLVMC(const ArchSpec &arch,
 
   // If any AArch64 variant, enable the ARMv8.5 ISA with SVE extensions so we
   // can disassemble newer instructions.
-  if (triple.getArch() == llvm::Triple::aarch64 || 
+  if (triple.getArch() == llvm::Triple::aarch64 ||
       triple.getArch() == llvm::Triple::aarch64_32)
     features_str += "+v8.5a,+sve2";
 

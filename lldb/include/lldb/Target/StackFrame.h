@@ -63,6 +63,45 @@ public:
     Artificial
   };
 
+  struct StackFrameCheckpoint {
+    /// Constructs this `StackFrameCheckpoint` object.
+    ///
+    explicit StackFrameCheckpoint(StackFrame &frame);
+
+    /// Enable move construction and assignment.
+    ///
+    StackFrameCheckpoint(StackFrameCheckpoint &&);
+    StackFrameCheckpoint &operator=(StackFrameCheckpoint &&);
+
+    /// Disable copy construction and assignment.
+    ///
+    DISALLOW_COPY_AND_ASSIGN(StackFrameCheckpoint);
+
+    /// Destructs this `StackFrameCheckpoint` object.
+    ///
+    ~StackFrameCheckpoint();
+
+    lldb::ThreadWP thread_wp;
+    uint32_t frame_index;
+    uint32_t concrete_frame_index;
+    lldb::RegisterContextSP reg_context_sp;
+    StackID stack_id;
+    Address frame_code_addr;
+    SymbolContext sc;
+    Flags flags;
+    Scalar frame_base;
+    Status frame_base_error;
+    bool cfa_is_valid;
+    Kind frame_kind;
+    bool behaves_like_zeroth_frame;
+    lldb::VariableListSP variable_list_sp;
+    ValueObjectList variable_list_value_objects;
+    lldb::RecognizedStackFrameSP recognized_frame_sp;
+    StreamString disassembly;
+  };
+
+  using StackFrameCheckpointUP = std::unique_ptr<StackFrameCheckpoint>;
+
   /// Construct a StackFrame object without supplying a RegisterContextSP.
   ///
   /// This is the one constructor that doesn't take a RegisterContext
@@ -119,6 +158,13 @@ public:
              const lldb::RegisterContextSP &reg_context_sp, lldb::addr_t cfa,
              const Address &pc, bool behaves_like_zeroth_frame,
              const SymbolContext *sc_ptr);
+
+  /// Construct a StackFrame object based on the supplied StackFrameCheckpoint.
+  ///
+  /// \param[in] checkpoint
+  ///    The stack frame checkpoint.
+  ///
+  explicit StackFrame(StackFrameCheckpoint &checkpoint);
 
   ~StackFrame() override;
 
@@ -488,6 +534,8 @@ public:
   void CalculateExecutionContext(ExecutionContext &exe_ctx) override;
 
   lldb::RecognizedStackFrameSP GetRecognizedFrame();
+
+  StackFrameCheckpointUP CheckpointStackFrame();
 
 protected:
   friend class StackFrameList;

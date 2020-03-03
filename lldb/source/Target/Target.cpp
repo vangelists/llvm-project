@@ -2355,11 +2355,28 @@ ExpressionResults Target::EvaluateExpression(
     result_valobj_sp = persistent_var_sp->GetValueObject();
     execution_results = eExpressionCompleted;
   } else {
+    // Suspend thread tracing and single stepping to prevent tracing user
+    // commands and speed up expression evaluation.
+    if (m_process_sp) {
+      ThreadList::ThreadIterable threads = m_process_sp->Threads();
+      for (ThreadSP thread : threads) {
+        thread->SuspendTracing(Thread::TracingToken::eExpressionEvaluation);
+      }
+    }
+
     llvm::StringRef prefix = GetExpressionPrefixContents();
     Status error;
     execution_results = UserExpression::Evaluate(exe_ctx, options, expr, prefix,
                                                  result_valobj_sp, error,
                                                  fixed_expression, ctx_obj);
+
+    // Resume thread tracing and single stepping after expression evaluation.
+    if (m_process_sp) {
+      ThreadList::ThreadIterable threads = m_process_sp->Threads();
+      for (ThreadSP thread : threads) {
+        thread->ResumeTracing(Thread::TracingToken::eExpressionEvaluation);
+      }
+    }
   }
 
   return execution_results;

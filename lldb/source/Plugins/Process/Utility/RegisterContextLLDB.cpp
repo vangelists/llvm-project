@@ -998,6 +998,15 @@ bool RegisterContextLLDB::ReadRegisterValueFromRegisterLocation(
     const RegisterInfo *reg_info, RegisterValue &value) {
   if (!IsValid())
     return false;
+
+  // If the stack frame state is being emulated as a result of a step back to
+  // mimic a previous point in time, fetch the restored register value directly.
+  if (m_thread.IsStackFrameStateEmulated()) {
+    uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
+    value.CopyValue(GetRecordedRegisterValue(register_number));
+    return true;
+  }
+
   bool success = false;
 
   switch (regloc.type) {
@@ -1051,6 +1060,14 @@ bool RegisterContextLLDB::WriteRegisterValueToRegisterLocation(
     const RegisterInfo *reg_info, const RegisterValue &value) {
   if (!IsValid())
     return false;
+
+  // If the stack frame state is being emulated as a result of a step back to
+  // mimic a previous point in time, overwrite the recorded register value.
+  if (m_thread.IsStackFrameStateEmulated()) {
+    uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
+    GetRecordedRegisterValue(register_number).CopyValue(value);
+    return true;
+  }
 
   bool success = false;
 
@@ -1147,6 +1164,11 @@ enum UnwindLLDB::RegisterSearchResult
 RegisterContextLLDB::SavedLocationForRegister(
     uint32_t lldb_regnum, lldb_private::UnwindLLDB::RegisterLocation &regloc) {
   RegisterNumber regnum(m_thread, eRegisterKindLLDB, lldb_regnum);
+
+  // No location information is needed for recorded register values.
+  if (m_thread.IsStackFrameStateEmulated()) {
+    return UnwindLLDB::RegisterSearchResult::eRegisterFound;
+  }
 
   // Have we already found this register location?
   if (!m_registers.empty()) {

@@ -17,6 +17,7 @@
 #include "lldb/Core/UserSettingsController.h"
 #include "lldb/Target/ExecutionContextScope.h"
 #include "lldb/Target/RegisterCheckpoint.h"
+#include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/StackFrameList.h"
 #include "lldb/Utility/Broadcaster.h"
 #include "lldb/Utility/Event.h"
@@ -45,13 +46,15 @@ public:
 
   FileSpecList GetLibrariesToAvoid() const;
 
-  bool GetTraceEnabledState() const;
-
   bool GetStepInAvoidsNoDebug() const;
 
   bool GetStepOutAvoidsNoDebug() const;
 
   uint64_t GetMaxBacktraceDepth() const;
+
+  const RegularExpression *GetTracingAvoidRegex() const;
+
+  bool GetIgnoreTracingAvoidRegex() const;
 };
 
 typedef std::shared_ptr<ThreadProperties> ThreadPropertiesSP;
@@ -62,6 +65,138 @@ class Thread : public std::enable_shared_from_this<Thread>,
                public ExecutionContextScope,
                public Broadcaster {
 public:
+  /// Used by `ThreadPlanInstructionTracer` and the consumers of its API for
+  /// recording, stepping back & replaying (exposed via this class) to indentify
+  /// individual points in time within the recorded thread execution history.
+  using TracepointID = std::size_t;
+
+  /// The maximum tracepoint ID.
+  static constexpr auto InvalidTracepointID =
+      std::numeric_limits<TracepointID>::max();
+
+  /// \enum TracingToken
+  ///
+  /// Used as naïve access control before resuming tracing, aiming to determine
+  /// whether the originator of the resumption request has the privilege to
+  /// affect tracing.
+  ///
+  /// For example, an expression evaluation cannot resume tracing if the user
+  /// or the tracer has suspended tracing.
+  ///
+  /// Details regarding the rules surrounding the various tokens can be found
+  /// in `ThreadPlanTracer::ShouldAcceptToken()`.
+  ///
+  /// \note
+  ///     The use case for this type arose from the need to prevent expression
+  ///     evaluation from arbitrarily resuming tracing, even after the user or
+  ///     the tracer has suspended tracing.
+  ///
+  enum class TracingToken {
+   eExpressionEvaluation, ///< Used when evaluating a user expression.
+   eInternal,             ///< Only for use by the tracer.
+   eInvalid,              ///< Only for use by the tracer.
+   eUserCommand           ///< Used by "recording {suspend, resume}" commands.
+  };
+
+  /// \class Bookmark
+  ///
+  /// Enables the user to mark points of interest within the recorded history
+  /// for easier lookup and step back or replay among those points.
+  ///
+  /// \note
+  ///     Currently, bookmarks are managed via `ThreadPlanInstructionTracer`.
+  ///
+  class TracingBookmark {
+  public:
+    /// Constructs this `TracingBookmark` object.
+    ///
+    /// \param[in] location
+    ///     The ID of the tracepoint marked by this bookmark.
+    ///
+    /// \param[in] name
+    ///     The name of this bookmark.
+    ///
+    /// \param[in] pc
+    ///     The value of PC at the tracepoint marked by this bookmark.
+    ///
+    TracingBookmark(TracepointID location, std::string_view name,
+                    lldb::addr_t pc);
+
+    /// Destructs this `TracingBookmark` object.
+    ///
+    ~TracingBookmark();
+
+    /// Enable move construction and assignment.
+    ///
+    TracingBookmark(TracingBookmark &&);
+    TracingBookmark &operator=(TracingBookmark &&);
+
+    /// Returns the name of this bookmark.
+    ///
+    /// \return
+    ///     The name of this bookmark.
+    ///
+    std::string_view GetName() const;
+
+    /// Returns the name of this bookmark formatted for printing.
+    ///
+    /// \return
+    ///     The name of this bookmark formatted for printing.
+    ///
+    std::string GetFormattedName() const;
+
+    /// Returns the location in recorded history marked by this bookmark.
+    ///
+    /// \return
+    ///     The location in recorded history marked by this bookmark.
+    ///
+    TracepointID GetLocation() const;
+
+    /// Returns the value of PC at the tracepoint marked by this bookmark.
+    ///
+    /// \return
+    ///     The value of PC at the tracepoint marked by this bookmark.
+    ///
+    lldb::addr_t GetPC() const;
+
+    /// Puts a description of this bookmark into the provided stream.
+    ///
+    /// \param[in] stream
+    ///     Stream into which to dump the description of this bookmark.
+    ///
+    void GetDescription(Stream &stream) const;
+
+  protected:
+    friend class ThreadPlanInstructionTracer;
+
+    /// Changes the name of this bookmark.
+    ///
+    /// \param[in] name
+    ///     The new name of this bookmark.
+    ///
+    void SetName(std::string_view name);
+
+    /// Changes the location marked by this bookmark.
+    ///
+    /// \param[in] location
+    ///     The location in recorded history to be marked by this bookmark.
+    ///
+    /// \param[in] pc
+    ///     The value of PC at the new location.
+    ///
+    void SetLocation(TracepointID location, lldb::addr_t pc);
+
+  private:
+    TracepointID m_location;
+    std::string m_name;
+    lldb::addr_t m_pc;
+
+    DISALLOW_COPY_AND_ASSIGN(TracingBookmark);
+  };
+
+  using ΤracingBookmarkList =
+      std::vector<std::reference_wrapper<const TracingBookmark>>;
+
   /// Broadcaster event bits definitions.
   enum {
     eBroadcastBitStackChanged = (1 << 0),
@@ -388,6 +523,10 @@ public:
   /// and having the thread call the SystemRuntime again.
   virtual bool ThreadHasQueueInformation() const { return false; }
 
+  lldb::StackFrameListSP GetStackFrameList();
+
+  void SetStackFrameList(lldb::StackFrameListSP curr_frames_sp);
+
   virtual uint32_t GetStackFrameCount() {
     return GetStackFrameList()->GetNumFrames();
   }
@@ -521,6 +660,225 @@ public:
   /// \return
   ///     An error that describes anything that went wrong
   virtual Status StepOut();
+
+  /// Default implementation for source-level step back.
+  ///
+  /// \param[in] num_statements
+  ///     The number of statements to step back.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status StepBack(std::size_t num_statements);
+
+  /// Default implementation for instruction-level step back.
+  ///
+  /// \param[in] num_instructions
+  ///     The number of instructions to step back.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status StepBackInstruction(std::size_t num_instructions);
+
+  /// Steps back until reaching the requested address.
+  ///
+  /// \param[in] address
+  ///     The target PC address.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status StepBackUntilAddress(lldb::addr_t address);
+
+  /// Steps back until reaching the requested line.
+  ///
+  /// \param[in] line
+  ///     The target line.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status StepBackUntilLine(uint32_t line);
+
+  /// Steps back until out of current function or beginning of history.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status StepBackUntilOutOfFunction();
+
+  /// Steps back until reaching beginning of history.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status StepBackUntilStart();
+
+  /// Default implementation for reverse continue.
+  ///
+  /// \param[out] canonical_breakpoint_id
+  ///     The canonical ID of the breakpoint responsible for the stop, if any.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status ReverseContinue(Stream &canonical_breakpoint_id);
+
+  /// Default implementation for source-level replay.
+  ///
+  /// \param[in] num_statements
+  ///     The number of statements to replay.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status Replay(std::size_t num_statements);
+
+  /// Default implementation for instruction-level replay.
+  ///
+  /// \param[in] num_instructions
+  ///     The number of instructions to replay.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status ReplayInstruction(std::size_t num_instructions);
+
+  /// Replays until reaching the requested address.
+  ///
+  /// \param[in] address
+  ///     The target PC address.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status ReplayUntilAddress(lldb::addr_t address);
+
+  /// Replays until reaching the requested line.
+  ///
+  /// \param[in] line
+  ///     The target line.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status ReplayUntilLine(uint32_t line);
+
+  /// Replays until out of current function or end of history.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status ReplayUntilOutOfFunction();
+
+  /// Replays until end of history.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status ReplayUntilEnd();
+
+  /// Replays until a breakpoint is hit or end of history is reached.
+  ///
+  /// \param[out] canonical_breakpoint_id
+  ///     The canonical ID of the breakpoint responsible for the stop, if any.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  virtual Status ReplayContinue(Stream &canonical_breakpoint_id);
+
+  /// Returns `true` if the state of the active stack frames is currently being
+  /// emulated by the tracer in order to mimic a previous point in time.
+  ///
+  /// \return
+  ///     `true` if the state of the active stack frames is currently being
+  ///     emulated by the tracer in order to mimic a previous point in time.
+  bool IsStackFrameStateEmulated();
+
+  /// Returns the register values recorded by the tracer for the given frame.
+  ///
+  /// \param[in] frame_idx
+  ///     The index of the frame whose recorded register values to get.
+  ///
+  /// \return
+  ///     The register values recorded by the tracer for the given frame.
+  const RegisterContext::RegisterValues &
+  GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx);
+
+  /// Returns the ID of the currently active tracepoint.
+  ///
+  /// \return
+  ///     The ID of the current tracepoint or `InvalidTracepointID` on failure.
+  TracepointID GetCurrentTracepointID();
+
+  /// Returns the value of PC at the given location in recorded history.
+  ///
+  /// \param[in] location
+  ///     The location in recorded history whose PC value to return.
+  ///
+  /// \return
+  ///     The value of PC at the given location in recorded history.
+  lldb::addr_t GetPCAtTracepoint(Thread::TracepointID location);
+
+  /// Creates a bookmark at the requested location in recorded history.
+  ///
+  /// \param[in] location
+  ///     The location in recorded history to be marked by the bookmark.
+  ///
+  /// \param[in] name
+  ///     The name of the bookmark.
+  ///
+  /// \return
+  ///     An error value, in case bookmark creation fails.
+  Status CreateTracingBookmark(TracepointID location,
+                               std::string_view name = {});
+
+  /// Deletes the bookmark marking the requested location.
+  ///
+  /// \param[in] location
+  ///     The location marked by the bookmark.
+  ///
+  /// \return
+  ///     An error value, in case bookmark deletion fails.
+  Status DeleteTracingBookmark(TracepointID location);
+
+  /// Returns the bookmark marking the requested location.
+  ///
+  /// \param[in] location
+  ///     The location in recorded history marked by the bookmark.
+  ///
+  /// \return
+  ///     The bookmark marking the requested location, if any.
+  llvm::Expected<const TracingBookmark &>
+  GetTracingBookmark(TracepointID location);
+
+  /// Returns a collection with references to all bookmarks.
+  ///
+  /// \return
+  ///     A collection with references to all bookmarks.
+  ΤracingBookmarkList GetAllTracingBookmarks();
+
+  /// Restores the thread's state to the point in time marked by the bookmark.
+  ///
+  /// \param[in] location
+  ///     The location within recorded history marked by the bookmark.
+  ///
+  /// \return
+  ///     An error value, in case thread state restoration fails.
+  Status JumpToTracingBookmark(TracepointID location);
+
+  /// Renames the bookmark marking the given location.
+  ///
+  /// \param[in] location
+  ///     The location in recorded history marked by the bookmark.
+  ///
+  /// \param[in] name
+  ///     The new name of the bookmark.
+  ///
+  /// \return
+  ///     An error value, in case bookmark renaming fails.
+  Status RenameTracingBookmark(TracepointID location, std::string_view name);
+
+  /// Moves the bookmark from the current location to a new one.
+  ///
+  /// \param[in] old_location
+  ///     The location in recorded history currently marked by the bookmark.
+  ///
+  /// \param[in] new_location
+  ///     The location in recorded history to be marked by the bookmark.
+  ///
+  /// \return
+  ///     An error value, in case bookmark moving fails.
+  Status
+  MoveTracingBookmark(TracepointID old_location, TracepointID new_location);
 
   /// Retrieves the per-thread data area.
   /// Most OSs maintain a per-thread pointer (e.g. the FS register on
@@ -1035,9 +1393,20 @@ public:
   virtual bool
   RestoreThreadStateFromCheckpoint(ThreadStateCheckpoint &saved_state);
 
-  void EnableTracer(bool value, bool single_step);
-
   void SetTracer(lldb::ThreadPlanTracerSP &tracer_sp);
+
+  void EnableTracing();
+  void DisableTracing();
+  void SuspendTracing(TracingToken token);
+  void ResumeTracing(TracingToken token);
+
+  bool TracingEnabled();
+  bool TracingDisabled();
+  bool TracingSuspended();
+
+  void EnableSingleStepping();
+  void DisableSingleStepping();
+  bool SingleSteppingEnabled();
 
   // Get the thread index ID. The index ID that is guaranteed to not be re-used
   // by a process. They start at 1 and increase with each new thread. This
@@ -1174,11 +1543,14 @@ public:
 
 protected:
   friend class ThreadPlan;
+  friend class ThreadPlanInstructionTracer;
   friend class ThreadList;
   friend class ThreadEventData;
   friend class StackFrameList;
   friend class StackFrame;
   friend class OperatingSystem;
+
+  using ThreadPlanStack = std::vector<lldb::ThreadPlanSP>;
 
   // This is necessary to make sure thread assets get destroyed while the
   // thread is still in good shape to call virtual thread methods.  This must
@@ -1193,7 +1565,9 @@ protected:
 
   ThreadPlan *GetPreviousPlan(ThreadPlan *plan);
 
-  typedef std::vector<lldb::ThreadPlanSP> plan_stack;
+  ThreadPlanStack GetCompletedPlanStack();
+
+  void SetCompletedPlanStack(ThreadPlanStack &completed_plan_stack);
 
   virtual lldb_private::Unwind *GetUnwinder();
 
@@ -1212,8 +1586,6 @@ protected:
   virtual lldb_private::StructuredData::ObjectSP FetchThreadExtendedInfo() {
     return StructuredData::ObjectSP();
   }
-
-  lldb::StackFrameListSP GetStackFrameList();
 
   void SetTemporaryResumeState(lldb::StateType new_state) {
     m_temporary_resume_state = new_state;
@@ -1238,13 +1610,13 @@ protected:
   lldb::StateType m_state;                  ///< The state of our process.
   mutable std::recursive_mutex
       m_state_mutex;       ///< Multithreaded protection for m_state.
-  plan_stack m_plan_stack; ///< The stack of plans this thread is executing.
-  plan_stack m_completed_plan_stack; ///< Plans that have been completed by this
-                                     ///stop.  They get deleted when the thread
-                                     ///resumes.
-  plan_stack m_discarded_plan_stack; ///< Plans that have been discarded by this
-                                     ///stop.  They get deleted when the thread
-                                     ///resumes.
+  ThreadPlanStack m_plan_stack; ///< The stack of plans this thread is executing.
+  ThreadPlanStack m_completed_plan_stack; ///< Plans that have been completed by
+                                          ///< this stop. They get deleted when
+                                          ///< the thread resumes.
+  ThreadPlanStack m_discarded_plan_stack; ///< Plans that have been discarded by
+                                          ///< this stop. They get deleted when
+                                          ///< the thread resumes.
   mutable std::recursive_mutex
       m_frame_mutex; ///< Multithreaded protection for m_state.
   lldb::StackFrameListSP m_curr_frames_sp; ///< The stack frames that get lazily
@@ -1273,6 +1645,9 @@ private:
 
 private:
   bool PlanIsBasePlan(ThreadPlan *plan_ptr);
+  lldb::ThreadPlanSP &GetBasePlan();
+  lldb::ThreadPlanTracerSP &GetBasePlanTracer();
+  constexpr ThreadPlanInstructionTracer &GetBasePlanInstructionTracer();
 
   void BroadcastSelectedFrameChange(StackID &new_frame_id);
 

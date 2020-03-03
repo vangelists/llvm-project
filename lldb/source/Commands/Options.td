@@ -891,6 +891,91 @@ let Command = "thread backtrace" in {
   Arg<"Boolean">, Desc<"Show the extended backtrace, if available">;
 }
 
+let Command = "thread step back instruction" in {
+  def thread_step_back_instruction_count : Option<"count", "c">, Arg<"Count">,
+  Desc<"Number of instructions to step back.">;
+}
+
+let Command = "thread step back statement" in {
+  def thread_step_back_statement_count : Option<"count", "c">, Arg<"Count">,
+  Desc<"Number of statements to step back.">;
+}
+
+let Command = "thread step back until address" in {
+  def thread_step_back_target_address : Option<"address", "a">, Arg<"Address">,
+  Required, Desc<"The target PC address.">;
+}
+
+let Command = "thread step back until line" in {
+  def thread_step_back_target_line : Option<"line", "l">, Arg<"LineNum">,
+  Required, Desc<"The target source line.">;
+}
+
+let Command = "thread replay instruction" in {
+  def thread_replay_instruction_count : Option<"count", "c">, Arg<"Count">,
+  Desc<"Number of instructions to replay.">;
+}
+
+let Command = "thread replay statement" in {
+  def thread_replay_statement_count : Option<"count", "c">, Arg<"Count">,
+  Desc<"Number of statements to replay.">;
+}
+
+let Command = "thread replay until address" in {
+  def thread_replay_target_address : Option<"address", "a">, Arg<"Address">,
+  Required, Desc<"The target PC address.">;
+}
+
+let Command = "thread replay until line" in {
+  def thread_replay_target_line : Option<"line", "l">, Arg<"LineNum">,
+  Required, Desc<"The target source line.">;
+}
+
+let Command = "thread tracing bookmark create" in {
+  def thread_tracing_bookmark_create_tracepoint:
+    Option<"tracepoint-id", "t">, Arg<"TracepointID">,
+    Desc<"The ID of the tracepoint to mark with the bookmark.">;
+  def thread_tracing_bookmark_create_name:
+    Option<"tracepoint-name", "n">, Arg<"TracepointName">,
+    Desc<"The name of the bookmark.">;
+}
+
+let Command = "thread tracing bookmark delete" in {
+  def thread_tracing_bookmark_delete_tracepoint:
+    Option<"tracepoint-id", "t">, Arg<"TracepointID">, Required,
+    Desc<"The ID of the tracepoint marked by the bookmark to delete.">;
+}
+
+let Command = "thread tracing bookmark list" in {
+  def thread_tracing_bookmark_list_tracepoint:
+    Option<"tracepoint-id", "t">, Arg<"TracepointID">,
+    Desc<"The ID of the tracepoint marked by the bookmark to list.">;
+}
+
+let Command = "thread tracing bookmark jump" in {
+  def thread_tracing_bookmark_jump_to_tracepoint:
+    Option<"tracepoint-id", "t">, Arg<"TracepointID">, Required,
+    Desc<"The ID of the tracepoint marked by the bookmark to jump to.">;
+}
+
+let Command = "thread tracing bookmark rename" in {
+  def thread_tracing_bookmark_rename_tracepoint:
+    Option<"tracepoint-id", "t">, Arg<"TracepointID">,
+    Desc<"The ID of the tracepoint marked by the bookmark to rename.">;
+  def thread_tracing_bookmark_rename_name:
+    Option<"tracepoint-name", "n">, Arg<"TracepointName">, Required,
+    Desc<"The new name of the bookmark.">;
+}
+
+let Command = "thread tracing bookmark move" in {
+  def thread_tracing_bookmark_move_source_tracepoint:
+    Option<"source-tracepoint-id", "s">, Arg<"TracepointID">, Required,
+    Desc<"The ID of the tracepoint currently marked by the bookmark to move.">;
+  def thread_tracing_bookmark_move_destination_tracepoint:
+    Option<"destination-tracepoint-id", "d">, Arg<"TracepointID">, Required,
+    Desc<"The ID of the tracepoint to be marked by the bookmark.">;
+}
+
 let Command = "thread step scope" in {
   def thread_step_scope_step_in_avoids_no_debug :
     Option<"step-in-avoids-no-debug", "a">, Group<1>, Arg<"Boolean">,

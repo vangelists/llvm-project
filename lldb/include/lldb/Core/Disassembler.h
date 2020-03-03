@@ -207,6 +207,7 @@ public:
   }
 
   virtual bool IsCall() { return false; }
+  virtual bool MayStore() { return false; }
 
 protected:
   Address m_address; // The section offset address of this instruction

@@ -19,11 +19,48 @@ namespace lldb_private {
 
 class StackFrameList {
 public:
+  using StackFrameCheckpoint = StackFrame::StackFrameCheckpoint;
+  using StackFrameCheckpointUP = std::unique_ptr<StackFrameCheckpoint>;
+  using StackFrameCheckpointList = std::vector<StackFrameCheckpointUP>;
+
+  struct StackFrameListCheckpoint {
+    /// Constructs this `StackFrameListCheckpoint` object.
+    ///
+    explicit StackFrameListCheckpoint(StackFrameList &frame_list);
+
+    /// Enable move construction and assignment.
+    ///
+    StackFrameListCheckpoint(StackFrameListCheckpoint &&);
+    StackFrameListCheckpoint &operator=(StackFrameListCheckpoint &&);
+
+    /// Disable copy construction and assignment.
+    ///
+    DISALLOW_COPY_AND_ASSIGN(StackFrameListCheckpoint);
+
+    /// Destructs this `StackFrameListCheckpoint` object.
+    ///
+    ~StackFrameListCheckpoint();
+
+    Thread *thread;
+    StackFrameCheckpointList frames;
+    lldb::StackFrameListSP prev_frames_sp;
+    uint32_t selected_frame_idx;
+    uint32_t current_inlined_depth;
+    lldb::addr_t current_inlined_pc;
+    bool show_inlined_frames;
+  };
+
+  using StackFrameListCheckpointUP = std::unique_ptr<StackFrameListCheckpoint>;
+
+  explicit StackFrameList(StackFrameListCheckpoint &checkpoint);
+
   // Constructors and Destructors
   StackFrameList(Thread &thread, const lldb::StackFrameListSP &prev_frames_sp,
                  bool show_inline_frames);
 
   ~StackFrameList();
+
+  StackFrameListCheckpointUP CheckpointStackFrameList();
 
   /// Get the number of visible frames. Frames may be created if \p can_create
   /// is true. Synthetic (inline) frames expanded from the concrete frame #0
@@ -86,6 +123,7 @@ public:
 
 protected:
   friend class Thread;
+  friend struct StackFrameListCheckpoint;
 
   bool SetFrameAtIndex(uint32_t idx, lldb::StackFrameSP &frame_sp);
 

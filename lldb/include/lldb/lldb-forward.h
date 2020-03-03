@@ -226,6 +226,7 @@ class ThreadPlanStepOverBreakpoint;
 class ThreadPlanStepRange;
 class ThreadPlanStepThrough;
 class ThreadPlanTracer;
+class ThreadPlanInstructionTracer;
 class ThreadSpec;
 class TraceOptions;
 class Type;

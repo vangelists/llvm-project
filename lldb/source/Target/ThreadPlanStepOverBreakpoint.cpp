@@ -107,7 +107,11 @@ bool ThreadPlanStepOverBreakpoint::DoPlanExplainsStop(Event *event_ptr) {
 }
 
 bool ThreadPlanStepOverBreakpoint::ShouldStop(Event *event_ptr) {
-  return !ShouldAutoContinue(event_ptr);
+  if (ThreadPlanTracerEnabled()) {
+    return false;
+  } else {
+    return !ShouldAutoContinue(event_ptr);
+  }
 }
 
 bool ThreadPlanStepOverBreakpoint::StopOthers() { return true; }

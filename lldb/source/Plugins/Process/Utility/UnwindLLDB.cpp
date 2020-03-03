@@ -470,6 +470,11 @@ UnwindLLDB::GetRegisterContextForFrameNum(uint32_t frame_num) {
 bool UnwindLLDB::SearchForSavedLocationForRegister(
     uint32_t lldb_regnum, lldb_private::UnwindLLDB::RegisterLocation &regloc,
     uint32_t starting_frame_num, bool pc_reg) {
+  // If the stack frame state is being emulated, fetch the restored frames.
+  if (m_frames.size() == 0 && m_thread.IsStackFrameStateEmulated()) {
+    GetFrameCount();
+  }
+
   int64_t frame_num = starting_frame_num;
   if (static_cast<size_t>(frame_num) >= m_frames.size())
     return false;

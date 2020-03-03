@@ -136,11 +136,11 @@ bool ThreadPlan::OkayToDiscard() {
 }
 
 lldb::StateType ThreadPlan::RunState() {
-  if (m_tracer_sp && m_tracer_sp->TracingEnabled() &&
-      m_tracer_sp->SingleStepEnabled())
+  if (ThreadPlanTracerEnabled() && m_tracer_sp->SingleSteppingEnabled()) {
     return eStateStepping;
-  else
+  } else {
     return GetPlanRunState();
+  }
 }
 
 bool ThreadPlan::IsUsuallyUnexplainedStopReason(lldb::StopReason reason) {

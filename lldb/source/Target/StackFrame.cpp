@@ -138,7 +138,52 @@ StackFrame::StackFrame(const ThreadSP &thread_sp, user_id_t frame_idx,
   }
 }
 
+StackFrame::StackFrame(StackFrameCheckpoint &checkpoint)
+  : m_thread_wp(checkpoint.thread_wp),
+  m_frame_index(checkpoint.frame_index),
+  m_concrete_frame_index(checkpoint.concrete_frame_index),
+  m_reg_context_sp(checkpoint.reg_context_sp),
+  m_id(checkpoint.stack_id),
+  m_frame_code_addr(checkpoint.frame_code_addr),
+  m_sc(checkpoint.sc),
+  m_flags(checkpoint.flags),
+  m_frame_base(checkpoint.frame_base),
+  m_frame_base_error(checkpoint.frame_base_error),
+  m_cfa_is_valid(checkpoint.cfa_is_valid),
+  m_stack_frame_kind(checkpoint.frame_kind),
+  m_behaves_like_zeroth_frame(checkpoint.behaves_like_zeroth_frame),
+  m_variable_list_sp(checkpoint.variable_list_sp),
+  m_variable_list_value_objects(checkpoint.variable_list_value_objects),
+  m_recognized_frame_sp(checkpoint.recognized_frame_sp),
+  m_disassembly(checkpoint.disassembly) {}
+
 StackFrame::~StackFrame() = default;
+
+StackFrame::StackFrameCheckpoint::StackFrameCheckpoint(StackFrame &frame)
+  : thread_wp(frame.m_thread_wp), frame_index(frame.m_frame_index),
+  concrete_frame_index(frame.m_concrete_frame_index),
+  reg_context_sp(frame.m_reg_context_sp->shared_from_this()),
+  stack_id(frame.m_id), frame_code_addr(frame.m_frame_code_addr),
+  sc(frame.m_sc), flags(frame.m_flags), frame_base(frame.m_frame_base),
+  frame_base_error(frame.m_frame_base_error),
+  cfa_is_valid(frame.m_cfa_is_valid), frame_kind(frame.m_stack_frame_kind),
+  behaves_like_zeroth_frame(frame.m_behaves_like_zeroth_frame),
+  variable_list_sp(frame.m_variable_list_sp),
+  variable_list_value_objects(frame.m_variable_list_value_objects),
+  recognized_frame_sp(frame.m_recognized_frame_sp),
+  disassembly(frame.m_disassembly) {}
+
+StackFrame::StackFrameCheckpoint::StackFrameCheckpoint(
+    StackFrameCheckpoint &&) = default;
+
+StackFrame::StackFrameCheckpoint::~StackFrameCheckpoint() = default;
+
+StackFrame::StackFrameCheckpoint
+&StackFrame::StackFrameCheckpoint::operator=(StackFrameCheckpoint &&) = default;
+
+StackFrame::StackFrameCheckpointUP StackFrame::CheckpointStackFrame() {
+  return std::make_unique<StackFrameCheckpoint>(*this);
+}
 
 StackID &StackFrame::GetStackID() {
   std::lock_guard<std::recursive_mutex> guard(m_mutex);

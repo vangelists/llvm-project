@@ -4735,7 +4735,7 @@ Process::RunThreadPlan(ExecutionContext &exe_ctx,
     // So we insert a "stopper" base plan on the stack before the plan we want
     // to run.  Since base plans always stop and return control to the user,
     // that will do just what we want.
-    stopper_base_plan_sp.reset(new ThreadPlanBase(*thread));
+    stopper_base_plan_sp.reset(new ThreadPlanBase(*thread, false));
     thread->QueueThreadPlan(stopper_base_plan_sp, false);
     // Have to make sure our public state is stopped, since otherwise the
     // reporting logic below doesn't work correctly.

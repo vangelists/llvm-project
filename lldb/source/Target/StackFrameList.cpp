@@ -46,11 +46,33 @@ StackFrameList::StackFrameList(Thread &thread,
   }
 }
 
+StackFrameList::StackFrameList(StackFrameListCheckpoint &checkpoint)
+    : m_thread(*checkpoint.thread),
+    m_prev_frames_sp(checkpoint.prev_frames_sp),
+    m_frames(), m_selected_frame_idx(checkpoint.selected_frame_idx),
+    m_concrete_frames_fetched(UINT32_MAX),
+    m_current_inlined_depth(checkpoint.current_inlined_depth),
+    m_current_inlined_pc(checkpoint.current_inlined_pc),
+    m_show_inlined_frames(checkpoint.show_inlined_frames) {
+  for (const StackFrameCheckpointUP &frame : checkpoint.frames) {
+    m_frames.emplace_back(std::make_shared<StackFrame>(*frame));
+  }
+}
+
 StackFrameList::~StackFrameList() {
   // Call clear since this takes a lock and clears the stack frame list in case
   // another thread is currently using this stack frame list
   Clear();
 }
+
+StackFrameList::StackFrameListCheckpoint::StackFrameListCheckpoint(
+    StackFrameListCheckpoint &&) = default;
+
+StackFrameList::StackFrameListCheckpoint
+&StackFrameList::StackFrameListCheckpoint::operator=(
+    StackFrameListCheckpoint &&) = default;
+
+StackFrameList::StackFrameListCheckpoint::~StackFrameListCheckpoint() = default;
 
 void StackFrameList::CalculateCurrentInlinedDepth() {
   uint32_t cur_inlined_depth = GetCurrentInlinedDepth();
@@ -996,4 +1018,23 @@ size_t StackFrameList::GetStatus(Stream &strm, uint32_t first_frame,
 
   strm.IndentLess();
   return num_frames_displayed;
+}
+
+StackFrameList::StackFrameListCheckpoint::StackFrameListCheckpoint(
+    StackFrameList &frame_list)
+    : thread(&frame_list.m_thread), prev_frames_sp(frame_list.m_prev_frames_sp),
+      selected_frame_idx(frame_list.m_selected_frame_idx),
+      current_inlined_depth(frame_list.m_current_inlined_depth),
+      current_inlined_pc(frame_list.m_current_inlined_pc),
+      show_inlined_frames(frame_list.m_show_inlined_frames) {
+  const std::size_t num_frames = frame_list.GetNumFrames();
+  for (std::size_t frame_idx = 0; frame_idx < num_frames; ++frame_idx) {
+    const StackFrameSP frame = frame_list.GetFrameAtIndex(frame_idx);
+    frames.push_back(std::move(frame->CheckpointStackFrame()));
+  }
+}
+
+StackFrameList::StackFrameListCheckpointUP
+StackFrameList::CheckpointStackFrameList() {
+  return std::make_unique<StackFrameListCheckpoint>(*this);
 }

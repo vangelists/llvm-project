@@ -487,9 +487,26 @@ public:
     m_tracer_sp = new_tracer_sp;
   }
 
+  static constexpr ThreadPlanTracer::Type GetThreadPlanTracerType() {
+    // The tracer type used by the base plan is currently decided during
+    // compilation, so there is no need to perform the check dynamically.
+    return ThreadPlanTracer::Type::eInstruction;
+  }
+
+  bool ThreadPlanTracerEnabled() {
+    if (m_tracer_sp) {
+      ThreadPlanTracer::State tracer_state = m_tracer_sp->GetState();
+      return tracer_state == ThreadPlanTracer::State::eEnabled ||
+             tracer_state == ThreadPlanTracer::State::eSuspended;
+    } else {
+      return false;
+    }
+  }
+
   void DoTraceLog() {
-    if (m_tracer_sp && m_tracer_sp->TracingEnabled())
+    if (ThreadPlanTracerEnabled()) {
       m_tracer_sp->Log();
+    }
   }
 
   // Some thread plans hide away the actual stop info which caused any

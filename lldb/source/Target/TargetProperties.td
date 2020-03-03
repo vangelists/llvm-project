@@ -228,10 +228,13 @@ let Definition = "thread" in {
     Global,
     DefaultStringValue<"">,
     Desc<"A list of libraries that source stepping won't stop in.">;
-  def EnableThreadTrace: Property<"trace-thread", "Boolean">,
-    DefaultFalse,
-    Desc<"If true, this thread will single-step and log execution.">;
   def MaxBacktraceDepth: Property<"max-backtrace-depth", "UInt64">,
     DefaultUnsignedValue<300000>,
     Desc<"Maximum number of frames to backtrace.">;
+  def TracingAvoidRegex: Property<"tracing-avoid-regex", "Regex">,
+    DefaultStringValue<"">,
+    Desc<"A regular expression defining functions that won't be traced.">;
+  def TracingIgnoreAvoidRegex: Property<"tracing-ignore-avoid-regex", "Boolean">,
+    DefaultFalse,
+    Desc<"Whether to ignore 'tracing-avoid-regex' setting and trace all symbols.">;
 }
