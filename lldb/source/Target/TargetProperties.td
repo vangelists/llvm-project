@@ -231,10 +231,14 @@ let Definition = "thread" in {
   def MaxBacktraceDepth: Property<"max-backtrace-depth", "UInt64">,
     DefaultUnsignedValue<300000>,
     Desc<"Maximum number of frames to backtrace.">;
-  def TracingAvoidRegex: Property<"tracing-avoid-regex", "Regex">,
+  def TracingAvoidSymbolsRegex: Property<"tracing-avoid-symbols-regex", "Regex">,
     DefaultStringValue<"">,
     Desc<"A regular expression defining functions that won't be traced.">;
-  def TracingIgnoreAvoidRegex: Property<"tracing-ignore-avoid-regex", "Boolean">,
+  def TracingAvoidLibraries: Property<"tracing-avoid-libraries", "FileSpecList">,
+    Global,
+    DefaultStringValue<"">,
+    Desc<"A list of libraries whose symbols won't be traced.">;
+  def TracingIgnoreAvoidSettings: Property<"tracing-ignore-avoid-settings", "Boolean">,
     DefaultFalse,
-    Desc<"Whether to ignore 'tracing-avoid-regex' setting and trace all symbols.">;
+    Desc<"Whether to ignore 'tracing-avoid-symbols-regex' and 'tracing-avoid-libraries' settings and trace all symbols.">;
 }

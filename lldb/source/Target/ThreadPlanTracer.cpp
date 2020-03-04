@@ -383,54 +383,75 @@ constexpr bool IsExceptionStateRegister(RegisterContext &register_context,
   return false;
 }
 
-/// Returns `true` if the given function belongs to a system library.
+/// Returns `true` if the given function belongs to a library whose symbols
+/// shall not be traced.
 ///
 /// \param[in] target
 ///     The current target.
+///
+/// \param[in] thread
+///     The thread being traced.
 ///
 /// \param[in] function_name
 ///     The name of the function to search for.
 ///
 /// \return
-///     `true` if the given function belongs to a system library.
+///     `true` if the given function belongs to a library whose symbols shall
+///     not be traced.
 ///
-static bool IsSystemLibraryFunction(Target &target, ConstString function_name) {
-  static std::map<std::size_t, bool> syslib_funcs;
+static bool IsLibraryFunctionToAvoid(Target &target, Thread &thread,
+                                     ConstString function_name) {
+  static std::map<std::size_t, bool> lib_funcs;
 
+  // Hash the function name and check whether the result is already cached.
   const std::size_t name_hash = llvm::hash_value(function_name.GetStringRef());
-
-  // Check whether the result has already been cached.
-  if (auto iter = syslib_funcs.find(name_hash); iter != syslib_funcs.end()) {
+  if (auto iter = lib_funcs.find(name_hash); iter != lib_funcs.end()) {
     return std::get<bool>(*iter);
   }
 
+  // Look up the function in all loaded modules.
+  SymbolContextList sc_list;
   constexpr bool include_symbols = true;
   constexpr bool include_inlines = true;
-
-  SymbolContextList sc_list;
   target.GetImages().FindFunctions(function_name, eFunctionNameTypeAuto,
                                    include_symbols, include_inlines, sc_list);
 
+  // If the function is not found in any loaded module, make the assumption that
+  // it belongs to a system library and thus ignore it.
   const std::size_t sc_list_size = sc_list.GetSize();
   if (sc_list_size == 0) {
-    syslib_funcs.emplace(name_hash, true);
+    lib_funcs.emplace(name_hash, true);
     return true;
   }
 
+  // Get the list of libraries whose symbols the user has opted not to trace.
+  const FileSpecList libraries_to_avoid = thread.GetLibrariesToAvoidTracing();
+
+  // Check whether the function belongs in a module that shall be ignored.
   for (std::size_t sc_idx = 0; sc_idx < sc_list_size; ++sc_idx) {
     SymbolContext sc;
     sc_list.GetContextAtIndex(sc_idx, sc);
     if (sc.module_sp) {
-      const llvm::StringRef module_directory =
-              sc.module_sp->GetFileSpec().GetDirectory().GetStringRef();
-      if (module_directory.startswith("/usr/lib")) {
-        syslib_funcs.emplace(name_hash, true);
+      const FileSpec module_spec = sc.module_sp->GetFileSpec();
+
+      // In case the function in question belongs to a system library, avoid it.
+      if (module_spec.GetDirectory().GetStringRef().startswith("/usr/lib")) {
+        lib_funcs.emplace(name_hash, true);
         return true;
+      }
+
+      // Finally, avoid tracing the function if it belongs to a library that the
+      // user has indicated not to trace.
+      for (const FileSpec &library_to_avoid : libraries_to_avoid) {
+        if (FileSpec::Match(module_spec, library_to_avoid)) {
+          lib_funcs.emplace(name_hash, true);
+          return true;
+        }
       }
     }
   }
 
-  syslib_funcs.emplace(name_hash, false);
+  lib_funcs.emplace(name_hash, false);
   return false;
 }
 
@@ -1757,29 +1778,31 @@ bool ThreadPlanInstructionTracer::ShouldAvoidCallTarget(
   }
 
   // Isolate the name of the called function.
-  llvm::StringRef function_name(comment);
-  function_name.consume_front("symbol stub for: ");
-  function_name = function_name.split(' ').first;
+  llvm::StringRef func_name(comment);
+  func_name.consume_front("symbol stub for: ");
+  func_name = func_name.split(' ').first;
 
   // There is no need to trace C++ STL functions.
-  if (function_name.startswith("std::")) {
+  if (func_name.startswith("std::")) {
     return true;
   }
 
   // Check whether the user has opted not to trace the called function.
-  if (const RegularExpression *avoid_regex = m_thread.GetTracingAvoidRegex();
-      avoid_regex) {
-    if (!avoid_regex->IsValid()) {
+  const RegularExpression *symbols_to_avoid_regex =
+      m_thread.GetSymbolsToAvoidTracingRegex();
+  if (symbols_to_avoid_regex) {
+    if (!symbols_to_avoid_regex->IsValid()) {
       FormatError("Invalid regular expression for symbols to avoid.");
       return false;
     }
-    if (avoid_regex->Execute(function_name)) {
+    if (symbols_to_avoid_regex->Execute(func_name)) {
       return true;
     }
   }
 
-  // Always avoid tracing system library functions.
-  if (IsSystemLibraryFunction(*m_target, ConstString(function_name))) {
+  // Finally, check whether this function belongs to a library whose symbols
+  // shall not be traced.
+  if (IsLibraryFunctionToAvoid(*m_target, m_thread, ConstString(func_name))) {
     return true;
   }
 
@@ -1913,7 +1936,7 @@ void ThreadPlanInstructionTracer::Log() {
   CaptureSnapshot();
 
   // The user has opted to trace calls to any symbol.
-  if (m_thread.GetIgnoreTracingAvoidRegex()) {
+  if (m_thread.GetIgnoreTracingAvoidSettings()) {
     return;
   }
 

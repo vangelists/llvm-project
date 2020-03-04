@@ -146,13 +146,23 @@ uint64_t ThreadProperties::GetMaxBacktraceDepth() const {
       nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
 }
 
-const RegularExpression *ThreadProperties::GetTracingAvoidRegex() const {
-  const uint32_t idx = ePropertyTracingAvoidRegex;
+const RegularExpression *
+ThreadProperties::GetSymbolsToAvoidTracingRegex() const {
+  const uint32_t idx = ePropertyTracingAvoidSymbolsRegex;
   return m_collection_sp->GetPropertyAtIndexAsOptionValueRegex(nullptr, idx);
 }
 
-bool ThreadProperties::GetIgnoreTracingAvoidRegex() const {
-  const uint32_t idx = ePropertyTracingIgnoreAvoidRegex;
+FileSpecList ThreadProperties::GetLibrariesToAvoidTracing() const {
+  const uint32_t idx = ePropertyTracingAvoidLibraries;
+  const OptionValueFileSpecList *option_value =
+      m_collection_sp->GetPropertyAtIndexAsOptionValueFileSpecList(nullptr,
+                                                                   false, idx);
+  return option_value ? option_value->GetCurrentValue()
+                      : FileSpecList();
+}
+
+bool ThreadProperties::GetIgnoreTracingAvoidSettings() const {
+  const uint32_t idx = ePropertyTracingIgnoreAvoidSettings;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
       nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
 }

@@ -1,4 +1,5 @@
-# Reverse Debugging
+Reverse Debugging
+=================
 
 **[ This project has been created in the context of my master's thesis and absolutely no guarantee is provided regarding stability, feature-completeness and future development, since it will most probably depend solely on my personal free time and future interests. ]**
 
@@ -6,12 +7,12 @@ This is an early-stage proof of concept for live reverse debugging in LLDB, simi
 
 The current implementation takes advantage of existing functionality in LLDB, that forces the target to always be executed in single-step mode. Single-step execution imposes a 1000x or greater slowdown, but proved to be a nice enough starting point for the scope of this project.
 
-As the implementation matures, steps are gradually being taken to alleviate the slowdown (see [Avoiding Unwanted Symbols](#avoiding-unwanted-symbols) and [User Expression Evaluation](#user-expression-evaluation) below), although the current levels of slowdown and memory overhead remain far from ideal for daily use or use with non-trivial programs.
+As the implementation matures, steps are gradually being taken to alleviate the slowdown (see [Avoiding Unwanted Symbols](#avoiding-unwanted-symbols) and [Evaluating User Expressions](#evaluating-user-expressions) below), although the current levels of slowdown and memory overhead remain far from ideal for daily use or use with non-trivial programs.
 
 However, there is still lots of room for improvement and I will continue to look for new ways to speed up tracing after completing some of the functionality described in [Future Work](#future-work).
 
 
-## Command Reference
+# Command Reference
 
 <details><summary>Recording</summary>
 
@@ -157,7 +158,12 @@ However, there is still lots of room for improvement and I will continue to look
 </details>
 
 
-## Internals
+# How to Use
+
+Follow the [official instructions](https://lldb.llvm.org/resources/build.html) to build LLDB as usual. No special flags or build steps are required.
+
+
+# Internals
 
 ### Capturing Snapshots
 
@@ -215,9 +221,9 @@ When stepping backwards or replaying for one or more instrucitons, the state and
 
 ### Avoiding Unwanted Symbols
 
-As already discussed, executing the target in single-step mode is extremely slow and imposes a great memory overhead, thus, in order to speed up execution and minimize memory footprint, all symbols that belong either to libraries under `/usr/lib/` or to the `std` C++ namespace are always executed normally and are not traced.
+As already discussed, executing the target in single-step mode is extremely slow and imposes a great memory overhead, thus, in order to speed up execution and minimize memory footprint, all symbols that belong either to libraries under `/usr/lib/` or to the `std` C++ namespace are always executed normally and not traced.
 
-Furthermore, the user has the ability to define a set of additional functions to ignore via the regular expression `target.process.thread.tracing-avoid-regex` in LLDB settings.
+Furthermore, the user has the ability to define a set of additional functions to ignore via the `target.process.thread.tracing-avoid-symbols-regex` and `target.process.thread.tracing-avoid-libraries` settings.
 
 In order to avoid a symbol, single-stepping and tracing are suspended before the relevant call instruction is executed and an artificial breakpoint that is deleted on first hit is set at the instruction right after the call. When the call finishes and the breakpoint is reached, then the callback of the breakpoint, which resumes single-stepping and tracing, is executed and the breakpoint is automatically deleted, allowing the thread to continue running.
 
@@ -248,16 +254,16 @@ Results of frequent and expensive computations are cached, aiming to improve tra
 For now, this translates to caching whether an address corrseponds to the heap or the stack and whether a symbol belongs to a library installed under `/usr/lib/`.
 
 
-### Implementation Location
+# Code Location
 
-Currently, most of the implementation is provided by the `ThreadPlanInstructionTracer` class in [ThreadPlanTracer.h](https://github.com/vangelists/llvm-project/blob/reverse-debugging/lldb/include/lldb/Target/ThreadPlanTracer.h) and [ThreadPlanTracer.cpp](https://github.com/vangelists/llvm-project/blob/reverse-debugging/lldb/source/Target/ThreadPlanTracer.cpp).
+Currently, most of the implementation is provided by the `ThreadPlanInstructionTracer` class in [ThreadPlanTracer.h](https://github.com/vangelists/llvm-project/blob/public/reverse-debugging/lldb/include/lldb/Target/ThreadPlanTracer.h) and [ThreadPlanTracer.cpp](https://github.com/vangelists/llvm-project/blob/public/reverse-debugging/lldb/source/Target/ThreadPlanTracer.cpp).
 
-The user-facing commands are implemented in [CommandObjectThread.cpp](https://github.com/vangelists/llvm-project/blob/reverse-debugging/lldb/source/Commands/CommandObjectThread.cpp).
+The user-facing commands are implemented in [CommandObjectThread.cpp](https://github.com/vangelists/llvm-project/blob/public/reverse-debugging/lldb/source/Commands/CommandObjectThread.cpp).
 
 A number of other files have also been modified, albeit to a lesser extent. You may see all the changes by [comparing the `public/reverse-debugging` branch to `master`](https://github.com/vangelists/llvm-project/compare/master...vangelists:public/reverse-debugging).
 
 
-## Future Work
+# Future Work
 
 In no particular order:
 
@@ -275,6 +281,6 @@ In no particular order:
 - [ ] Add support for more languages, e.g. Swift or Rust.
 
 
-## Contact
+# Contact
 
 Vangelis Tsiatsianas - [contact@vangelists.com](mailto:contact@vangelists.com?subject=[GitHub]%20Live%20Reverse%20Debugging%20for%20LLDB)

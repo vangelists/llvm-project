@@ -688,8 +688,9 @@ private:
   ///     The instruction right after the call.
   ///
   /// \note
-  ///     The `target.process.thread.tracing-avoid-regex` setting provides a way
-  ///     for the user to describe additional functions to avoid.
+  ///     The `target.process.thread.tracing-avoid-symbols-regex` and
+  ///     `target.process.thread.tracing-avoid-libraries` settings allow the
+  ///     user to define additional functions to avoid.
   ///
   void HandleCallTargetToAvoid(const Instruction &instruction_after_call);
 

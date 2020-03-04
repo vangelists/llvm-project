@@ -52,9 +52,11 @@ public:
 
   uint64_t GetMaxBacktraceDepth() const;
 
-  const RegularExpression *GetTracingAvoidRegex() const;
+  const RegularExpression *GetSymbolsToAvoidTracingRegex() const;
 
-  bool GetIgnoreTracingAvoidRegex() const;
+  FileSpecList GetLibrariesToAvoidTracing() const;
+
+  bool GetIgnoreTracingAvoidSettings() const;
 };
 
 typedef std::shared_ptr<ThreadProperties> ThreadPropertiesSP;
