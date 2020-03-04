@@ -57,6 +57,8 @@ public:
   FileSpecList GetLibrariesToAvoidTracing() const;
 
   bool GetIgnoreTracingAvoidSettings() const;
+
+  bool GetTracingJumpOverDeallocationFunctions() const;
 };
 
 typedef std::shared_ptr<ThreadProperties> ThreadPropertiesSP;

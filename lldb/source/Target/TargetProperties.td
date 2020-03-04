@@ -240,5 +240,8 @@ let Definition = "thread" in {
     Desc<"A list of libraries whose symbols won't be traced.">;
   def TracingIgnoreAvoidSettings: Property<"tracing-ignore-avoid-settings", "Boolean">,
     DefaultFalse,
-    Desc<"Whether to ignore 'tracing-avoid-symbols-regex' and 'tracing-avoid-libraries' settings and trace all symbols.">;
+    Desc<"Whether to ignore avoided symbols and libraries and trace all symbols.">;
+  def TracingJumpOverDeallocationFunctions: Property<"tracing-jump-over-deallocation-functions", "Boolean">,
+    DefaultFalse,
+    Desc<"Whether to jump over known deallocation funtions, such as 'free()' and 'munmap()', in order to reduce the number of inaccessible heap regions when stepping back or replaying.">;
 }

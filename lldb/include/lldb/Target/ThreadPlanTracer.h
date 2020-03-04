@@ -684,25 +684,25 @@ private:
   /// Also, sets an artificial breakpoint at the instruction after the call in
   /// order to continue tracing after the call has finished.
   ///
-  /// \param[in] instruction_after_call
-  ///     The instruction right after the call.
+  /// \param[in] instruction_after_call_address
+  ///     The address of the instruction right after the call.
   ///
   /// \note
   ///     The `target.process.thread.tracing-avoid-symbols-regex` and
   ///     `target.process.thread.tracing-avoid-libraries` settings allow the
   ///     user to define additional functions to avoid.
   ///
-  void HandleCallTargetToAvoid(const Instruction &instruction_after_call);
+  void HandleCallTargetToAvoid(lldb::addr_t instruction_after_call_address);
 
-  /// Checks if the target of the given call is a symbol to avoid.
+  /// Returns `true` if the given call target is a symbol to avoid.
   ///
-  /// \param[in] call_instruction
-  ///     The call instruction.
+  /// \param[in] call_target
+  ///     The demangled name of the called function.
   ///
   /// \return
-  ///     `true` if the call target is a symbol to avoid.
+  ///     `true` if the given call target is a symbol to avoid.
   ///
-  bool ShouldAvoidCallTarget(Instruction &call_instruction) const;
+  bool ShouldAvoidCallTarget(llvm::StringRef &call_target) const;
 
   /// Resumes tracing and single stepping, if suspended by the tracer itself
   /// before calling a symbol to avoid.

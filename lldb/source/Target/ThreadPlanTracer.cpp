@@ -352,6 +352,44 @@ constexpr auto exc_register_set_id = 2;
 constexpr auto exc_register_set_id = max_register_set_id;
 #endif
 
+/// Maximum size in bytes of x86 `NOP` instruction opcode.
+constexpr auto max_i386_nop_opcode_size = 9;
+
+/// Opcodes of x86 `NOP` instruction.
+constexpr uint8_t i386_nop_opcodes[][max_i386_nop_opcode_size] {
+  {0x90},
+  {0x66, 0x90},
+  {0x0f, 0x1f, 0x00},
+  {0x0f, 0x1f, 0x40, 0x00},
+  {0x0f, 0x1f, 0x44, 0x00, 0x00},
+  {0x66, 0x0f, 0x1f, 0x40, 0x00, 0x00},
+  {0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00},
+  {0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00},
+  {0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00}
+};
+
+/// Holds a backup of an instruction opcode that was replaced with `NOP` and is
+/// pending restoration.
+static struct {
+  void SetLocation(addr_t address, std::size_t opcode_size) {
+    this->address = address;
+    this->opcode_size = opcode_size;
+  }
+
+  void Clear() {
+    ::memset(opcode, 0, opcode_size);
+    SetLocation(LLDB_INVALID_ADDRESS, 0);
+  }
+
+  bool IsPendingRestoration() {
+    return address != LLDB_INVALID_ADDRESS;
+  }
+
+  addr_t address = LLDB_INVALID_ADDRESS; ///< The address of the saved opcode.
+  uint8_t opcode[max_i386_nop_opcode_size]; ///< The opcode replaced with `NOP`.
+  std::size_t opcode_size = 0; ///< The size of the opcode in bytes.
+} opcode_backup;
+
 /// Returns `true` if the register with the provided ID is characterized as an
 /// exception state register in the given register context.
 ///
@@ -381,6 +419,19 @@ constexpr bool IsExceptionStateRegister(RegisterContext &register_context,
     }
   }
   return false;
+}
+
+/// Returns `true` if the given function is a known deallocation function.
+///
+/// \param[in] function_name
+///     The name of the function.
+///
+/// \return
+///     `true` if the given function is a known deallocation function.
+///
+static bool IsDeallocationFunction(llvm::StringRef function_name) {
+  static const std::set<std::string_view> dealloc_funcs = {"free", "munmap"};
+  return dealloc_funcs.find(function_name) != dealloc_funcs.end();
 }
 
 /// Returns `true` if the given function belongs to a library whose symbols
@@ -670,6 +721,31 @@ static void DoForEachValueObjectInStackFrame(StackFrame &frame,
   }
 }
 
+/// Returns the demangled name of the function called by the given instruction.
+///
+/// \param[in] call_instruction
+///     The call instruction.
+///
+/// \return
+///     The demangled name of the function called by the given instruction, if
+///     available; an empty string, otherwise.
+///
+static std::string GetDemangledCallTarget(Thread &thread,
+                                          Instruction &call_instruction) {
+  assert("Instruction must be a call!" && call_instruction.IsCall());
+  ExecutionContext exe_ctx;
+  thread.CalculateExecutionContext(exe_ctx);
+
+  // Isolate the name of the called function.
+  llvm::StringRef call_target(call_instruction.GetComment(&exe_ctx));
+  if (!call_target.empty()) {
+    call_target.consume_front("symbol stub for: ");
+    call_target = call_target.split(' ').first;
+  }
+
+  return call_target.str();
+}
+
 /// Returns the number of bytes stored by an instruction, based on the mnemonic.
 ///
 /// \param[in] instruction_mnemonic
@@ -681,7 +757,7 @@ static void DoForEachValueObjectInStackFrame(StackFrame &frame,
 /// \note
 ///     Currently, only basic x86 instructions are supported.
 ///
-offset_t GetBytesStored(llvm::StringRef instruction_mnemonic) {
+static offset_t GetBytesStored(llvm::StringRef instruction_mnemonic) {
   switch (instruction_mnemonic.back()) {
   case 'b':
     return 1;
@@ -696,6 +772,68 @@ offset_t GetBytesStored(llvm::StringRef instruction_mnemonic) {
   default:
     llvm_unreachable("Unknown byte size!");
   }
+}
+
+/// Replaces the opcode at the given address with `NOP`.
+///
+/// \param[in] thread
+///     The thread being traced.
+///
+/// \param[in] opcode_address
+///     The address of the opcode to replace.
+///
+/// \param[in] opcode_size
+///     The size of the opcode to replace.
+///
+/// \return
+///     An error value, in case replacement failed.
+///
+static Status BackUpAndReplaceOpcodeWithNOP(Thread &thread,
+                                            addr_t opcode_address,
+                                            std::size_t opcode_size) {
+  assert("There is already an opcode pending restoration!" &&
+         !opcode_backup.IsPendingRestoration());
+
+  // Save current opcode.
+  Status error;
+  thread.GetProcess()->ReadMemory(opcode_address, opcode_backup.opcode,
+                                  opcode_size, error);
+  if (error.Fail()) {
+    return Status("Failed to read process memory: %s", error.AsCString());
+  }
+  opcode_backup.SetLocation(opcode_address, opcode_size);
+
+  // Replace opcode with the appropriate NOP instruction, based on its size.
+  thread.GetProcess()->WriteMemory(opcode_address,
+                                   i386_nop_opcodes[opcode_size],
+                                   opcode_size, error);
+  if (error.Fail()) {
+    return Status("Failed to write process memory: %s", error.AsCString());
+  }
+
+  return Status();
+}
+
+/// Restores the opcode that has been previously replaced with `NOP`.
+///
+/// \param[in] thread
+///     The thread being traced.
+///
+/// \return
+///     An error value, in case restoration failed.
+///
+static Status RestoreOpcodeBackup(Thread &thread) {
+  assert("There is no opcode pending restoration!" &&
+         opcode_backup.IsPendingRestoration());
+
+  Status error;
+  thread.GetProcess()->WriteMemory(opcode_backup.address, opcode_backup.opcode,
+                                   opcode_backup.opcode_size, error);
+  opcode_backup.Clear();
+
+  return error.Fail()
+      ? Status("Failed to write process memory: %s", error.AsCString())
+      : Status();
 }
 
 #pragma mark HeapData
@@ -1764,26 +1902,15 @@ ThreadPlanInstructionTracer::DisassembleInstructions(
 }
 
 bool ThreadPlanInstructionTracer::ShouldAvoidCallTarget(
-    Instruction &call_instruction) const {
-  assert("Instruction must be a call!" && call_instruction.IsCall());
-
-  ExecutionContext exe_ctx;
-  m_thread.CalculateExecutionContext(exe_ctx);
-
-  const char *comment = call_instruction.GetComment(&exe_ctx);
-  if (std::strlen(comment) == 0) {
-    // A missing comment often indicates a lack of debug information, thus this
-    // is probably a call to an external or system library function.
+    llvm::StringRef &call_target) const {
+  // An unidentified call target often indicates a lack of debug information,
+  // thus this is probably a call to an external or system library function.
+  if (call_target.empty()) {
     return true;
   }
 
-  // Isolate the name of the called function.
-  llvm::StringRef func_name(comment);
-  func_name.consume_front("symbol stub for: ");
-  func_name = func_name.split(' ').first;
-
   // There is no need to trace C++ STL functions.
-  if (func_name.startswith("std::")) {
+  if (call_target.startswith("std::")) {
     return true;
   }
 
@@ -1795,14 +1922,14 @@ bool ThreadPlanInstructionTracer::ShouldAvoidCallTarget(
       FormatError("Invalid regular expression for symbols to avoid.");
       return false;
     }
-    if (symbols_to_avoid_regex->Execute(func_name)) {
+    if (symbols_to_avoid_regex->Execute(call_target)) {
       return true;
     }
   }
 
   // Finally, check whether this function belongs to a library whose symbols
   // shall not be traced.
-  if (IsLibraryFunctionToAvoid(*m_target, m_thread, ConstString(func_name))) {
+  if (IsLibraryFunctionToAvoid(*m_target, m_thread, ConstString(call_target))) {
     return true;
   }
 
@@ -1834,15 +1961,10 @@ bool ThreadPlanInstructionTracer::AvoidedSymbolBreakpointHitCallback(
   return false;
 }
 
-void ThreadPlanInstructionTracer::HandleCallTargetToAvoid(
-    const Instruction &instruction_after_call) {
+void ThreadPlanInstructionTracer::HandleCallTargetToAvoid(addr_t bp_addr) {
   // Suspend tracing and single stepping.
   SuspendTracing(Thread::TracingToken::eInternal);
   DisableSingleStepping();
-
-  // Get the address of the instruction after the call.
-  const addr_t bp_addr =
-      instruction_after_call.GetAddress().GetOpcodeLoadAddress(m_target);
 
   // Set an artificial breakpoint at the instruction after the call.
   if (BreakpointSP bp = m_target->CreateBreakpoint(bp_addr, true, false); bp) {
@@ -1932,6 +2054,12 @@ void ThreadPlanInstructionTracer::Log() {
   // replaced by the real one.
   m_emulating_stack_frames = false;
 
+  // Restore any instruction opcode that was replaced with `NOP` in order to
+  // jump over a call to a deallocation function.
+  if (opcode_backup.IsPendingRestoration()) {
+    RestoreOpcodeBackup(m_thread);
+  }
+
   // Save the state of the thread at this point in time.
   CaptureSnapshot();
 
@@ -1950,13 +2078,32 @@ void ThreadPlanInstructionTracer::Log() {
     return;
   }
 
-  // Check if the thread has stopped at an instruction that needs additional
-  // handling, i.e. a call instruction with a target symbol that should be
-  // avoided or an instruction that may store.
-  Instruction &current_inst = *inst_list->GetInstructionAtIndex(0);
-  if (current_inst.IsCall() && ShouldAvoidCallTarget(current_inst)) {
-    HandleCallTargetToAvoid(*inst_list->GetInstructionAtIndex(1));
-  } else if (current_inst.MayStore()) {
-    HandleInstructionThatMayStore(current_inst);
+  // Check if the current instruction needs special handling, e.g.:
+  //   - Calls a deallocation function that should not be executed.
+  //   - Calls a function that should be executed, but not be traced.
+  //   - May store.
+  Instruction &curr_inst = *inst_list->GetInstructionAtIndex(0);
+  if (curr_inst.IsCall()) {
+    llvm::StringRef call_target = GetDemangledCallTarget(m_thread, curr_inst);
+    const Instruction &inst_after_call = *inst_list->GetInstructionAtIndex(1);
+    const addr_t call_inst_addr =
+        curr_inst.GetAddress().GetOpcodeLoadAddress(m_target);
+    const addr_t next_inst_addr =
+        inst_after_call.GetAddress().GetOpcodeLoadAddress(m_target);
+
+    if (m_thread.GetTracingJumpOverDeallocationFunctions() &&
+        IsDeallocationFunction(call_target)) {
+      const std::size_t call_opcode_size = curr_inst.GetOpcode().GetByteSize();
+      Status error = BackUpAndReplaceOpcodeWithNOP(m_thread, call_inst_addr,
+                                                   call_opcode_size);
+      if (error.Fail()) {
+        FormatError("Failed to replace call to deallocation function: {0}",
+                    error.AsCString());
+      }
+    } else if (ShouldAvoidCallTarget(call_target)) {
+      HandleCallTargetToAvoid(next_inst_addr);
+    }
+  } else if (curr_inst.MayStore()) {
+    HandleInstructionThatMayStore(curr_inst);
   }
 }

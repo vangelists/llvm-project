@@ -208,11 +208,13 @@ When stepping backwards or replaying for one or more instrucitons, the state and
 
     Stepping backwards or forward within the recorded execution history means that the state of the heap must also be restored. This is accomplished by undoing or reapplying the modifications made by each store instruction sequentially, up to the point in time where the thread is restored.
 
-    If a heap page has been since unmapped, then the restoration of the old contents fails and the user is warned that all history assosciated with that particular memory page will be discarded, since it is no longer needed.
+    If a heap region has since been unmapped, then the restoration of the old contents fails and the user is warned that all history assosciated with that particular heap region will be discarded, since it is no longer needed.
 
-    On the other side, if the heap region in question is still mapped and thus writable, but its contents have been invalidated and, optionally, reclaimed (e.g. through a call to `free()` and an optional subsequent call to `malloc()`), then that particular heap region ends up in an undefined state, of which the user remains unaware.
+    On the other side, if the heap region in question is still mapped and thus writable, but its contents have been invalidated or moved, e.g. through a call to `free()` or `realloc()`, respectively, then that particular heap region ends up in an undefined state, of which the user remains unaware.
 
-    The latter could possibly be resolved by tracking calls to (de)allocations functions in all supported languages or by using a custom allocator, however it was out of the scope of this project and thus a solution was not considered.
+    Setting `target.process.thread.tracing-jump-over-deallocation-functions` will cause the debugger to not execute traced calls to known deallocation functions, such as `free()` and `munmap()`, increasing the number of heap regions that will ultimately be available, since the regions won't be invalidated and reclaimed or unmapped. That is achieved by detecting calls to such functions and replacing the opcode of the `call` instruction with a `nop` until the thread moves on to the next instruction and the opcode of the `call` instruction is restored. This operation is mostly transparent to the user, since the `nop` instruction is only visible in the disassembly while the thread is stopped at the `call` instruction that has been replaced.
+
+    Identifying reallocated pages could be possible via a custom allocator or special tracking of reallocation functions, but resolving this issue was out of the scope of this project and thus a solution was not considered.
 
 - **Thread State**
 
@@ -223,7 +225,9 @@ When stepping backwards or replaying for one or more instrucitons, the state and
 
 As already discussed, executing the target in single-step mode is extremely slow and imposes a great memory overhead, thus, in order to speed up execution and minimize memory footprint, all symbols that belong either to libraries under `/usr/lib/` or to the `std` C++ namespace are always executed normally and not traced.
 
-Furthermore, the user has the ability to define a set of additional functions to ignore via the `target.process.thread.tracing-avoid-symbols-regex` and `target.process.thread.tracing-avoid-libraries` settings.
+Furthermore, the user may define a set of additional functions to ignore via the following settings:
+- `target.process.thread.tracing-avoid-symbols-regex`
+- `target.process.thread.tracing-avoid-libraries`
 
 In order to avoid a symbol, single-stepping and tracing are suspended before the relevant call instruction is executed and an artificial breakpoint that is deleted on first hit is set at the instruction right after the call. When the call finishes and the breakpoint is reached, then the callback of the breakpoint, which resumes single-stepping and tracing, is executed and the breakpoint is automatically deleted, allowing the thread to continue running.
 

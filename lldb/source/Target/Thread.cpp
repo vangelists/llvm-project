@@ -167,6 +167,12 @@ bool ThreadProperties::GetIgnoreTracingAvoidSettings() const {
       nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
 }
 
+bool ThreadProperties::GetTracingJumpOverDeallocationFunctions() const {
+  const uint32_t idx = ePropertyTracingJumpOverDeallocationFunctions;
+  return m_collection_sp->GetPropertyAtIndexAsBoolean(
+      nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
+}
+
 // Thread Event Data
 
 ConstString Thread::ThreadEventData::GetFlavorString() {
