@@ -252,7 +252,7 @@ public:
   ///     The target PC address.
   ///
   /// \return
-  ///     An error value, in case stepping back fails or address is not found.
+  ///     An error value, in case replay fails or address is not found.
   ///
   Status ReplayUntilAddress(lldb::addr_t address);
 
@@ -262,21 +262,21 @@ public:
   ///     The target line.
   ///
   /// \return
-  ///     An error value, in case stepping back fails or line is not found.
+  ///     An error value, in case replay fails or line is not found.
   ///
   Status ReplayUntilLine(uint32_t line);
 
   /// Replays until out of current function or end of history.
   ///
   /// \return
-  ///     An error value, in case stepping back fails.
+  ///     An error value, in case replay fails.
   ///
   Status ReplayUntilOutOfFunction();
 
   /// Replays until end of history.
   ///
   /// \return
-  ///     An error value, in case stepping back fails.
+  ///     An error value, in case replay fails.
   ///
   Status ReplayUntilEnd();
 
@@ -286,7 +286,7 @@ public:
   ///     The canonical ID of the breakpoint responsible for the stop, if any.
   ///
   /// \return
-  ///     An error value, in case forward replay fails.
+  ///     An error value, in case replay fails.
   ///
   Status ReplayContinue(Stream &canonical_breakpoint_id);
 
@@ -559,6 +559,83 @@ private:
   using Timeline = std::vector<Tracepoint>;
   using Bookmarks = std::unordered_map<Thread::TracepointID,
                                        Thread::TracingBookmark>;
+  using TracepointCallback = std::function<Status(Tracepoint &)>;
+
+  /// \enum NavigationDirection
+  ///
+  /// Indicates the direction in which the timeline is traversed in order to
+  /// step back or replay.
+  ///
+  enum NavigationDirection : bool {
+    Forward,
+    Reverse
+  };
+
+  /// Navigates through recorded history for the given number of statements,
+  /// stepping into calls.
+  ///
+  /// \param[in] num_statements
+  ///     The number of statements to step back.
+  ///
+  /// \param[in] direction
+  ///     The direction in which to navigate through recorded history.
+  ///
+  /// \return
+  ///     An error value, in case navigation fails.
+  ///
+  Status Navigate(std::size_t num_statements, NavigationDirection direction);
+
+  /// Navigates through recorded history until reaching the requested address.
+  ///
+  /// \param[in] address
+  ///     The target PC address.
+  ///
+  /// \param[in] direction
+  ///     The direction in which to navigate through recorded history.
+  ///
+  /// \return
+  ///     An error value, in case navigation fails or address is not found.
+  ///
+  Status NavigateToAddress(lldb::addr_t address, NavigationDirection direction);
+
+  /// Navigates through recorded history until reaching the requested line.
+  ///
+  /// \param[in] line
+  ///     The target line.
+  ///
+  /// \param[in] direction
+  ///     The direction in which to navigate through recorded history.
+  ///
+  /// \return
+  ///     An error value, in case navigation fails or line is not found.
+  ///
+  Status NavigateToLine(uint32_t line, NavigationDirection direction);
+
+  /// Navigates through recorded history until out of current function or limit
+  /// of history.
+  ///
+  /// \param[in] direction
+  ///     The direction in which to navigate through recorded history.
+  ///
+  /// \return
+  ///     An error value, in case navigation fails.
+  ///
+  Status NavigateUntilOutOfFunction(NavigationDirection direction);
+
+  /// Navigates through recorded history until a breakpoint is hit or limit of
+  /// history is reached.
+  ///
+  /// \param[in] direction
+  ///     The direction in which to navigate through recorded history.
+  ///
+  /// \param[out] canonical_breakpoint_id
+  ///     The canonical ID of the breakpoint responsible for the stop, if any.
+  ///
+  /// \return
+  ///     An error value, in case navigation fails.
+  ///
+  Status ContinueInTimeline(NavigationDirection direction,
+                            Stream &canonical_breakpoint_id);
 
   /// Saves a snapshot of the thread.
   ///
@@ -678,6 +755,18 @@ private:
   ///
   void HandleInstructionThatMayStore(Instruction &store_instruction);
 
+  /// Handles calls to functions that should be executed, but not traced, and
+  /// calls to deallocation functions that should not be executed at all.
+  ///
+  /// \param[in] call_instruction
+  ///     The call instruction.
+  ///
+  /// \param[in] instruction_after_call
+  ///     The instruction after the call.
+  ///
+  void HandleCallInstruction(Instruction &call_instruction,
+                             Instruction &instruction_after_call);
+
   /// Suspends thread tracing and single stepping to prevent tracing unwanted
   /// symbols and speed up execution.
   ///
@@ -702,7 +791,7 @@ private:
   /// \return
   ///     `true` if the given call target is a symbol to avoid.
   ///
-  bool ShouldAvoidCallTarget(llvm::StringRef &call_target) const;
+  bool ShouldAvoidCallTarget(llvm::StringRef call_target) const;
 
   /// Resumes tracing and single stepping, if suspended by the tracer itself
   /// before calling a symbol to avoid.
@@ -725,26 +814,6 @@ private:
   static bool AvoidedSymbolBreakpointHitCallback(
       void *baton, StoppointCallbackContext *context,
       lldb::user_id_t breakpoint_id, lldb::user_id_t breakpoint_location_id);
-
-  /// Checks if the thread can step back the given number of instructions.
-  ///
-  /// \param[in] num_instructions
-  ///     The number of instructions to step back.
-  ///
-  /// \return
-  ///     An error value, in case the number of instructions is invalid.
-  ///
-  Status CheckIfThreadCanStepBack(std::size_t num_instructions = 1) const;
-
-  /// Checks if the thread can replay the given number of instructions.
-  ///
-  /// \param[in] num_instructions
-  ///     The number of instructions to replay.
-  ///
-  /// \return
-  ///     An error value, in case the number of instructions is invalid.
-  ///
-  Status CheckIfThreadCanReplay(std::size_t num_instructions = 1) const;
 
   /// Disassembles and returns the requested number of instructions starting
   /// from the current one.
@@ -804,6 +873,82 @@ private:
   ///     `true` if this tracer has been suspended for internal reasons.
   ///
   bool HasBeenSuspendedInternally() const;
+
+  /// Steps back until `predicate` returns a success status or beginning of
+  /// history is reached.
+  ///
+  /// \param[in] predicate
+  ///     Executed on each iteration. A successful return status ends stepping.
+  ///
+  /// \param[in] initializer
+  ///     Called before stepping with the current tracepoint as argument.
+  ///     A failed return status makes the function return immediately.
+  ///
+  /// \param[in] past_begin
+  ///     Called in case the stepping loop reaches past beginning of history.
+  ///
+  /// \return
+  ///     An error value, in case stepping back fails.
+  ///
+  Status StepBackInternal(
+      TracepointCallback &&predicate,
+      TracepointCallback &&initializer = GetDefaultTracepointCallback(),
+      TracepointCallback &&past_begin = GetDefaultTracepointCallback());
+
+  /// Replays until `predicate` returns a success status or end of history is
+  /// reached.
+  ///
+  /// \param[in] predicate
+  ///     Executed on each iteration. A successful return status ends replay.
+  ///
+  /// \param[in] initializer
+  ///     Called before replaying with the current tracepoint as argument.
+  ///     A failed return status makes the function return immediately.
+  ///
+  /// \param[in] past_end
+  ///     Called in case the replay loop reaches past end of history.
+  ///
+  /// \return
+  ///     An error value, in case replay fails.
+  ///
+  Status ReplayInternal(
+      TracepointCallback &&predicate,
+      TracepointCallback &&initializer = GetDefaultTracepointCallback(),
+      TracepointCallback &&past_end = GetDefaultTracepointCallback());
+
+  /// Traverses the recorded history.
+  ///
+  /// \param[in] predicate
+  ///     Executed on each iteration. A successful return status ends the loop.
+  ///
+  /// \param[in] initializer
+  ///     Called before the loop with the current tracepoint as argument.
+  ///     A failed return status makes the function return immediately.
+  ///
+  /// \param[in] past_limit
+  ///     Called in case the loop reaches past the limits of history.
+  ///
+  /// \return
+  ///     The number of instructions to step back or replay.
+  ///
+  /// \note
+  ///     Helper function for `StepBackInternal()` and `ReplayInternal()`.
+  ///
+  template<typename TimelineIteratorType>
+  llvm::Expected<std::size_t> TraverseTimeline(
+      const TimelineIteratorType &current_tracepoint,
+      const TimelineIteratorType &timeline_limit,
+      TracepointCallback &&predicate,
+      TracepointCallback &&initializer,
+      TracepointCallback &&past_limit);
+
+  /// Returns a callback with an empty body, accepted by `StepBackInternal()`
+  /// and `ReplayInternal().
+  ///
+  /// \return
+  ///     A callback that always returns a successful status.
+  ///
+  static inline TracepointCallback GetDefaultTracepointCallback();
 
   /// Prints the given formatted message to the default logging stream using
   /// the prefix "error: " and a newline in the end.

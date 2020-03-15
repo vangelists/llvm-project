@@ -1030,6 +1030,11 @@ bool ThreadPlanInstructionTracer::ShouldAcceptToken(
   }
 }
 
+ThreadPlanInstructionTracer::TracepointCallback
+ThreadPlanInstructionTracer::GetDefaultTracepointCallback() {
+  return [](Tracepoint &) { return Status(); };
+};
+
 template <typename... Args>
 void ThreadPlanInstructionTracer::FormatError(llvm::StringRef format,
                                               Args &&... args) const {
@@ -1141,174 +1146,202 @@ Status ThreadPlanInstructionTracer::MoveBookmark(
   return Status("A bookmark does not exist at this location.");
 }
 
-#pragma mark Stepping Back
+#pragma mark Navigating Recorded History
 
-Status ThreadPlanInstructionTracer::StepBack(std::size_t num_statements) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
+template<typename TimelineIteratorType>
+llvm::Expected<std::size_t> ThreadPlanInstructionTracer::TraverseTimeline(
+    const TimelineIteratorType &current_tracepoint,
+    const TimelineIteratorType &timeline_limit, TracepointCallback &&predicate,
+    TracepointCallback &&initializer, TracepointCallback &&past_limit) {
+  if (Status error = initializer(*current_tracepoint); error.Fail()) {
+    return MakeError(error.AsCString());
   }
 
-  const auto first_tracepoint = m_timeline.cbegin();
-  const auto current_tracepoint = first_tracepoint + m_current_tracepoint;
-  auto tracepoint = (current_tracepoint != first_tracepoint)
-                        ? current_tracepoint - 1
-                        : current_tracepoint;
-  uint32_t current_line = current_tracepoint->line;
-  std::size_t found_statements = 0;
+  auto tracepoint = current_tracepoint;
 
-  for (; tracepoint >= first_tracepoint; --tracepoint) {
-    if (tracepoint->line != current_line) {
-      if (++found_statements == num_statements) {
-        break;
-      }
-    }
-    current_line = tracepoint->line;
-  }
-
-  if (found_statements < num_statements) {
-    if (found_statements == 1) {
-      return Status("There is only 1 previous statement in history.");
-    } else if (found_statements > 1) {
-      return Status("There are only %" PRIu64 " previous statements in history.",
-                    found_statements);
-    } else {
-      return Status("There are no previous statements in history.");
-    }
-  }
-
-  return StepBackInstruction(std::distance(tracepoint, current_tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::StepBackUntilAddress(addr_t address) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  } else if (address == LLDB_INVALID_ADDRESS) {
-    return Status("Invalid address.");
-  }
-
-  const auto first_tracepoint = m_timeline.begin();
-  const auto current_tracepoint = first_tracepoint + m_current_tracepoint;
-  if (GetRecordedPCForStackFrame(*current_tracepoint) == address) {
-    return Status("Already at requested address.");
-  }
-
-  auto tracepoint = (current_tracepoint != first_tracepoint)
-                        ? current_tracepoint - 1
-                        : current_tracepoint;
-
-  for (; tracepoint >= first_tracepoint; --tracepoint) {
-    if (GetRecordedPCForStackFrame(*tracepoint) == address) {
+  while (++tracepoint != timeline_limit) {
+    if (predicate(*tracepoint).Success()) {
       break;
     }
   }
-  if (tracepoint == first_tracepoint &&
-      GetRecordedPCForStackFrame(*tracepoint) != address) {
-    return Status("Requested address was not found in recorded history.");
-  }
-
-  return StepBackInstruction(std::distance(tracepoint, current_tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::StepBackUntilLine(uint32_t line) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  } else if (line == LLDB_INVALID_LINE_NUMBER) {
-    return Status("Invalid line number.");
-  }
-
-  const auto first_tracepoint = m_timeline.cbegin();
-  const auto current_tracepoint = first_tracepoint + m_current_tracepoint;
-  if (current_tracepoint->line == line) {
-    return Status("Already at requested source line.");
-  }
-
-  auto tracepoint = (current_tracepoint != first_tracepoint)
-                        ? current_tracepoint - 1
-                        : current_tracepoint;
-
-  for (; tracepoint >= first_tracepoint; --tracepoint) {
-    if (tracepoint->line == line) {
-      break;
-    }
-  }
-  if (tracepoint == first_tracepoint && tracepoint->line != line) {
-    return Status("Requested source line was not found in recorded history.");
-  }
-
-  return StepBackInstruction(std::distance(tracepoint, current_tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::StepBackUntilOutOfFunction() {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  }
-
-  const auto first_tracepoint = m_timeline.cbegin();
-  const auto current_tracepoint = first_tracepoint + m_current_tracepoint;
-  auto tracepoint = (current_tracepoint != first_tracepoint)
-                        ? current_tracepoint - 1
-                        : current_tracepoint;
-  const uint32_t current_frame_depth = current_tracepoint->frame_depth;
-
-  for (; tracepoint > first_tracepoint; --tracepoint) {
-    StackFrame::Kind frame_kind = tracepoint->frames->frames[0]->frame_kind;
-    if (tracepoint->frame_depth < current_frame_depth &&
-        frame_kind == StackFrame::Kind::Regular) {
-      break;
+  if (tracepoint == timeline_limit) {
+    --tracepoint;
+    if (Status error = past_limit(*tracepoint); error.Fail()) {
+      return MakeError(error.AsCString());
     }
   }
 
-  return StepBackInstruction(std::distance(tracepoint, current_tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::StepBackUntilStart() {
-  return StepBackInstruction(m_current_tracepoint);
-}
-
-Status ThreadPlanInstructionTracer::CheckIfThreadCanStepBack(
-    std::size_t num_instructions) const {
-  if (m_timeline.empty()) {
-    return Status("Must record at least one instruction to step back.");
-  }
-  if (m_current_tracepoint == 0) {
-    return Status("Already at oldest point in time.");
-  }
-  if (num_instructions == 0) {
-    return Status("Number of instructions to step must be at least 1.");
-  }
-  if (num_instructions > m_current_tracepoint) {
-    return Status("There are only %" PRIu64 " previous instructions in history.",
-                  m_current_tracepoint);
-  }
-  return Status();
+  return std::distance(current_tracepoint, tracepoint);
 }
 
 Status
-ThreadPlanInstructionTracer::StepBackInstruction(std::size_t num_instructions) {
+ThreadPlanInstructionTracer::StepBackInternal(TracepointCallback &&predicate,
+                                              TracepointCallback &&initializer,
+                                              TracepointCallback &&past_begin) {
   if (GetState() == State::eDisabled) {
     return Status("Tracing is disabled.");
   }
 
-  if (Status error = CheckIfThreadCanStepBack(num_instructions); error.Fail()) {
-    return error;
+  const auto timeline_begin = m_timeline.rend();
+  const auto current_tracepoint = timeline_begin - m_current_tracepoint - 1;
+
+  auto num_instructions = TraverseTimeline<Timeline::reverse_iterator>(
+      current_tracepoint, timeline_begin, std::move(predicate),
+      std::move(initializer), std::move(past_begin));
+
+  return !num_instructions ? Status(std::move(num_instructions.takeError()))
+                           : StepBackInstruction(*num_instructions);
+}
+
+Status
+ThreadPlanInstructionTracer::ReplayInternal(TracepointCallback &&predicate,
+                                            TracepointCallback &&initializer,
+                                            TracepointCallback &&past_end) {
+  if (GetState() == State::eDisabled) {
+    return Status("Tracing is disabled.");
   }
 
-  // Even if tracing has been suspended to avoid tracing an unwanted symbol,
-  // the user should still be able to step back.
-  if (HasBeenSuspendedInternally()) {
-    m_this->EnableSingleStepping();
+  const auto current_tracepoint = m_timeline.begin() + m_current_tracepoint;
 
-    // Mark this step as artificial to prevent capturing a duplicate snapshot
-    // when tracing is resumed.
-    m_artificial_step = true;
-    m_this->ResumeTracing(Thread::TracingToken::eUserCommand);
-    m_artificial_step = false;
+  auto num_instructions = TraverseTimeline<Timeline::iterator>(
+      current_tracepoint, m_timeline.end(), std::move(predicate),
+      std::move(initializer), std::move(past_end));
+
+  return !num_instructions ? Status(std::move(num_instructions.takeError()))
+                           : ReplayInstruction(*num_instructions);
+}
+
+Status ThreadPlanInstructionTracer::Navigate(std::size_t num_statements,
+                                             NavigationDirection direction) {
+  std::size_t found_statements = 0;
+  uint32_t current_line;
+
+  const auto predicate = [&](Tracepoint &tracepoint) {
+    if (tracepoint.line != current_line) {
+      if (++found_statements == num_statements) {
+        return Status();
+      }
+      current_line = tracepoint.line;
+    }
+    return Status(LLDB_GENERIC_ERROR);
+  };
+
+  const auto initializer = [&](Tracepoint &current_tracepoint) {
+    current_line = current_tracepoint.line;
+    return Status();
+  };
+
+  const auto past_limit = [&](Tracepoint &) {
+    if (found_statements < num_statements) {
+      switch (found_statements) {
+      case 0:
+        return Status("Not enough statements exist in history.");
+      case 1:
+        return Status("There is only 1 recorded statement in this direction.");
+      default:
+        return Status("There are only %" PRIu64 " recorded statements in this "
+                      "direction.", found_statements);
+      }
+    }
+    return Status();
+  };
+
+  switch (direction) {
+  case NavigationDirection::Forward:
+    return ReplayInternal(std::move(predicate), std::move(initializer),
+                          std::move(past_limit));
+  case NavigationDirection::Reverse:
+    return StepBackInternal(std::move(predicate), std::move(initializer),
+                            std::move(past_limit));
   }
+}
 
-  RestoreSnapshot(m_current_tracepoint - num_instructions);
-  m_stepped_back = true;
+Status
+ThreadPlanInstructionTracer::NavigateToAddress(lldb::addr_t address,
+                                               NavigationDirection direction) {
+  const auto predicate = [&](Tracepoint &tracepoint) {
+    return (GetRecordedPCForStackFrame(tracepoint) == address)
+        ? Status()
+        : Status(LLDB_GENERIC_ERROR);
+  };
 
-  return Status();
+  const auto initializer = [&](Tracepoint &current_tracepoint) {
+    if (address == LLDB_INVALID_ADDRESS) {
+      return Status("Invalid address.");
+    } else if (GetRecordedPCForStackFrame(current_tracepoint) == address) {
+      return Status("Already at requested address.");
+    } else {
+      return Status();
+    }
+  };
+
+  const auto past_limit = [&](Tracepoint &) {
+    return Status("Requested address was not found in history.");
+  };
+
+  switch (direction) {
+  case NavigationDirection::Forward:
+    return ReplayInternal(std::move(predicate), std::move(initializer),
+                          std::move(past_limit));
+  case NavigationDirection::Reverse:
+    return StepBackInternal(std::move(predicate), std::move(initializer),
+                            std::move(past_limit));
+  }
+}
+
+Status
+ThreadPlanInstructionTracer::NavigateToLine(uint32_t line,
+                                            NavigationDirection direction) {
+  const auto predicate = [&](Tracepoint &tracepoint) {
+    return (tracepoint.line == line) ? Status() : Status(LLDB_GENERIC_ERROR);
+  };
+
+  const auto initializer = [&](Tracepoint &current_tracepoint) {
+    if (line == LLDB_INVALID_LINE_NUMBER) {
+      return Status("Invalid line number.");
+    } else if (current_tracepoint.line == line) {
+      return Status("Already at requested address.");
+    } else {
+      return Status();
+    }
+  };
+
+  const auto past_limit = [](Tracepoint &) {
+    return Status("Requested source line was not found in history.");
+  };
+
+  switch (direction) {
+  case NavigationDirection::Forward:
+    return ReplayInternal(std::move(predicate), std::move(initializer),
+                          std::move(past_limit));
+  case NavigationDirection::Reverse:
+    return StepBackInternal(std::move(predicate), std::move(initializer),
+                            std::move(past_limit));
+  }
+}
+
+Status ThreadPlanInstructionTracer::NavigateUntilOutOfFunction(
+    NavigationDirection direction) {
+  uint32_t current_frame_depth;
+
+  const auto predicate = [&](Tracepoint &tracepoint) {
+    StackFrame::Kind frame_kind = tracepoint.frames->frames[0]->frame_kind;
+    const bool is_regular = (frame_kind == StackFrame::Kind::Regular);
+    const bool is_outer = tracepoint.frame_depth < current_frame_depth;
+    return (is_regular && is_outer) ? Status() : Status(LLDB_GENERIC_ERROR);
+  };
+
+  const auto initializer = [&](Tracepoint &current_tracepoint) {
+    current_frame_depth = current_tracepoint.frame_depth;
+    return Status();
+  };
+
+  switch (direction) {
+  case NavigationDirection::Forward:
+    return ReplayInternal(std::move(predicate), std::move(initializer));
+  case NavigationDirection::Reverse:
+    return StepBackInternal(std::move(predicate), std::move(initializer));
+  }
 }
 
 llvm::Expected<Breakpoint &>
@@ -1338,181 +1371,12 @@ addr_t ThreadPlanInstructionTracer::GetRecordedPCForStackFrame(
   return registers[pc_num].GetAsUInt64();
 }
 
-Status
-ThreadPlanInstructionTracer::ReverseContinue(Stream &canonical_breakpoint_id) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  }
-
-  if (Status error = CheckIfThreadCanStepBack(); error.Fail()) {
-    return error;
-  }
-
-  const std::size_t zeroth_frame_idx = 0;
-  Thread::TracepointID tracepoint = m_current_tracepoint;
-
-  while (--tracepoint != Thread::InvalidTracepointID) {
-    // Get recorded PC value for zeroth stack frame.
-    const addr_t pc = GetRecordedPCForStackFrame(m_timeline[tracepoint],
-                                                 zeroth_frame_idx);
-
-    // Check if there is a breakpoint that resolves to the saved pc.
-    llvm::Expected<Breakpoint &> breakpoint = GetBreakpointAtAddress(pc);
-    if (breakpoint) {
-      const break_id_t breakpoint_location_id =
-          breakpoint->HasResolvedLocations()
-              ? breakpoint->GetLocationAtIndex(0)->GetID()
-              : LLDB_INVALID_BREAK_ID;
-      BreakpointID::GetCanonicalReference(&canonical_breakpoint_id,
-                                          breakpoint->GetID(),
-                                          breakpoint_location_id);
-      break;
-    }
-    llvm::consumeError(std::move(breakpoint.takeError()));
-  }
-
-  // Revert the tracepoint index to the oldest point in time in case of a
-  // wraparound, i.e. when beginning of recorded history is reached.
-  if (tracepoint == Thread::InvalidTracepointID) {
-    tracepoint = 0;
-  }
-
-  return StepBackInstruction(m_current_tracepoint - tracepoint);
-}
-
-#pragma mark Replaying
-
-Status ThreadPlanInstructionTracer::Replay(std::size_t num_statements) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  }
-
-  const auto current_tracepoint = m_timeline.cbegin() + m_current_tracepoint;
-  auto tracepoint = current_tracepoint + 1;
-  uint32_t current_line = current_tracepoint->line;
-  std::size_t found_statements = 0;
-
-  for (; tracepoint != m_timeline.cend(); ++tracepoint) {
-    if (tracepoint->line != current_line) {
-      if (++found_statements == num_statements) {
-        break;
-      }
-    }
-    current_line = tracepoint->line;
-  }
-
-  if (found_statements < num_statements) {
-    if (found_statements == 1) {
-      return Status("There is only 1 newer statement in history.");
-    } else if (found_statements > 1) {
-      return Status("There are only %" PRIu64 " newer statements in history.",
-                    found_statements);
-    } else {
-      return Status("There are no newer statements in history.");
-    }
-  }
-
-  return ReplayInstruction(std::distance(current_tracepoint, tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::ReplayUntilAddress(addr_t address) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  } else if (address == LLDB_INVALID_ADDRESS) {
-    return Status("Invalid address.");
-  }
-
-  const auto current_tracepoint = m_timeline.begin() + m_current_tracepoint;
-  if (GetRecordedPCForStackFrame(*current_tracepoint) == address) {
-    return Status("Already at requested address.");
-  }
-
-  auto tracepoint = current_tracepoint + 1;
-
-  for (; tracepoint != m_timeline.cend(); ++tracepoint) {
-    if (GetRecordedPCForStackFrame(*tracepoint) == address) {
-      break;
-    }
-  }
-  if (tracepoint == m_timeline.cend()) {
-    return Status("Requested address was not found in recorded history.");
-  }
-
-  return ReplayInstruction(std::distance(current_tracepoint, tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::ReplayUntilLine(uint32_t line) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  } else if (line == LLDB_INVALID_LINE_NUMBER) {
-    return Status("Invalid line number.");
-  }
-
-  const auto current_tracepoint = m_timeline.begin() + m_current_tracepoint;
-  if (current_tracepoint->line == line) {
-    return Status("Already at requested source line.");
-  }
-
-  auto tracepoint = current_tracepoint + 1;
-
-  for (; tracepoint != m_timeline.cend(); ++tracepoint) {
-    if (tracepoint->line == line) {
-      break;
-    }
-  }
-  if (tracepoint == m_timeline.cend()) {
-    return Status("Requested source line was not found in recorded history.");
-  }
-
-  return ReplayInstruction(std::distance(current_tracepoint, tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::ReplayUntilOutOfFunction() {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  }
-
-  const auto current_tracepoint = m_timeline.cbegin() + m_current_tracepoint;
-  auto tracepoint = current_tracepoint + 1;
-  const uint32_t current_frame_depth = current_tracepoint->frame_depth;
-
-  for (; tracepoint != m_timeline.cend(); ++tracepoint) {
-    StackFrame::Kind frame_kind = tracepoint->frames->frames[0]->frame_kind;
-    if (tracepoint->frame_depth < current_frame_depth &&
-        frame_kind == StackFrame::Kind::Regular) {
-      break;
-    }
-  }
-  if (tracepoint == m_timeline.cend()) {
-    assert("History should always contain at least one tracepoint!" &&
-           !m_timeline.empty());
-    --tracepoint;
-  }
-
-  return ReplayInstruction(std::distance(current_tracepoint, tracepoint));
-}
-
-Status ThreadPlanInstructionTracer::ReplayUntilEnd() {
-  return ReplayInstruction(m_timeline.size() - m_current_tracepoint - 1);
-}
-
-Status
-ThreadPlanInstructionTracer::ReplayContinue(Stream &canonical_breakpoint_id) {
-  if (GetState() == State::eDisabled) {
-    return Status("Tracing is disabled.");
-  }
-
-  if (Status error = CheckIfThreadCanReplay(); error.Fail()) {
-    return error;
-  }
-
-  const std::size_t zeroth_frame_idx = 0;
-  Thread::TracepointID tracepoint = m_current_tracepoint;
-
-  while (++tracepoint < m_timeline.size()) {
-    // Get recorded PC value for zeroth stack frame.
-    const addr_t pc = GetRecordedPCForStackFrame(m_timeline[tracepoint],
-                                                 zeroth_frame_idx);
+Status ThreadPlanInstructionTracer::ContinueInTimeline(
+    NavigationDirection direction, Stream &canonical_breakpoint_id) {
+  const auto predicate = [&](Tracepoint &tracepoint) {
+    // Get recorded PC value for deepest stack frame.
+    constexpr std::size_t zeroth_frame_idx = 0;
+    const addr_t pc = GetRecordedPCForStackFrame(tracepoint, zeroth_frame_idx);
 
     // Check if there is a breakpoint that resolves to the saved PC.
     llvm::Expected<Breakpoint &> breakpoint = GetBreakpointAtAddress(pc);
@@ -1524,47 +1388,130 @@ ThreadPlanInstructionTracer::ReplayContinue(Stream &canonical_breakpoint_id) {
       BreakpointID::GetCanonicalReference(&canonical_breakpoint_id,
                                           breakpoint->GetID(),
                                           breakpoint_location_id);
-      break;
+      return Status();
     }
     llvm::consumeError(std::move(breakpoint.takeError()));
-  }
+    return Status(LLDB_GENERIC_ERROR);
+  };
 
-  // Revert the tracepoint index to the latest point in time in case end of
-  // recorded history is reached.
-  if (tracepoint == m_timeline.size()) {
-    --tracepoint;
+  switch (direction) {
+  case NavigationDirection::Forward:
+    return ReplayInternal(std::move(predicate));
+  case NavigationDirection::Reverse:
+    return StepBackInternal(std::move(predicate));
   }
-
-  return ReplayInstruction(tracepoint - m_current_tracepoint);
 }
 
-Status ThreadPlanInstructionTracer::CheckIfThreadCanReplay(
-    std::size_t num_instructions) const {
-  if (m_timeline.empty()) {
-    return Status("Must record at least one instruction to replay.");
+#pragma mark Stepping Back
+
+Status ThreadPlanInstructionTracer::StepBack(std::size_t num_statements) {
+  return Navigate(num_statements, NavigationDirection::Reverse);
+}
+
+Status ThreadPlanInstructionTracer::StepBackUntilAddress(addr_t address) {
+  return NavigateToAddress(address, NavigationDirection::Reverse);
+}
+
+Status ThreadPlanInstructionTracer::StepBackUntilLine(uint32_t line) {
+  return NavigateToLine(line, NavigationDirection::Reverse);
+}
+
+Status ThreadPlanInstructionTracer::StepBackUntilOutOfFunction() {
+  return NavigateUntilOutOfFunction(NavigationDirection::Reverse);
+}
+
+Status ThreadPlanInstructionTracer::StepBackUntilStart() {
+  return StepBackInstruction(m_current_tracepoint);
+}
+
+Status
+ThreadPlanInstructionTracer::ReverseContinue(Stream &canonical_breakpoint_id) {
+  return ContinueInTimeline(NavigationDirection::Reverse,
+                            canonical_breakpoint_id);
+}
+
+Status
+ThreadPlanInstructionTracer::StepBackInstruction(std::size_t num_instructions) {
+  // Check if the thread can step back.
+  if (GetState() == State::eDisabled) {
+    return Status("Tracing is disabled.");
+  } else if (m_timeline.empty()) {
+    return Status("Must record at least one instruction to step back.");
+  } else if (m_current_tracepoint == 0) {
+    return Status("Already at oldest point in time.");
+  } else if (num_instructions == 0) {
+    return Status("Number of instructions to step must be at least 1.");
+  } else if (num_instructions > m_current_tracepoint) {
+    return Status("There are only %" PRIu64 " older instructions in history.",
+                  m_current_tracepoint);
   }
-  if (m_current_tracepoint == m_timeline.size() - 1) {
-    return Status("Already at latest point in time.");
+
+  // Even if tracing has been suspended to avoid tracing an unwanted symbol,
+  // the user should still be able to step back.
+  if (HasBeenSuspendedInternally()) {
+    m_this->EnableSingleStepping();
+
+    // Mark this step as artificial to prevent capturing a duplicate snapshot
+    // when tracing is resumed.
+    m_artificial_step = true;
+    m_this->ResumeTracing(Thread::TracingToken::eUserCommand);
+    m_artificial_step = false;
   }
-  if (num_instructions < 1) {
-    return Status("Number of instructions to replay be at least 1.");
-  }
-  std::size_t newer_instructions = m_timeline.size() - m_current_tracepoint - 1;
-  if (num_instructions > newer_instructions) {
-    return Status("There are only %" PRIu64 " newer instructions in history.",
-                  newer_instructions);
-  }
+
+  // Restore the state at the requested point in time.
+  RestoreSnapshot(m_current_tracepoint - num_instructions);
+  m_stepped_back = true;
+
   return Status();
+}
+
+#pragma mark Replaying
+
+Status ThreadPlanInstructionTracer::Replay(std::size_t num_statements) {
+  return Navigate(num_statements, NavigationDirection::Forward);
+}
+
+Status ThreadPlanInstructionTracer::ReplayUntilAddress(addr_t address) {
+  return NavigateToAddress(address, NavigationDirection::Forward);
+}
+
+Status ThreadPlanInstructionTracer::ReplayUntilLine(uint32_t line) {
+  return NavigateToLine(line, NavigationDirection::Forward);
+}
+
+Status ThreadPlanInstructionTracer::ReplayUntilOutOfFunction() {
+  return NavigateUntilOutOfFunction(NavigationDirection::Forward);
+}
+
+Status ThreadPlanInstructionTracer::ReplayUntilEnd() {
+  return ReplayInstruction(m_timeline.size() - m_current_tracepoint - 1);
+}
+
+Status
+ThreadPlanInstructionTracer::ReplayContinue(Stream &canonical_breakpoint_id) {
+  return ContinueInTimeline(NavigationDirection::Forward,
+                            canonical_breakpoint_id);
 }
 
 Status
 ThreadPlanInstructionTracer::ReplayInstruction(std::size_t num_instructions) {
+  // Check if the thread can replay.
   if (GetState() == State::eDisabled) {
     return Status("Tracing is disabled.");
+  } else if (m_timeline.empty()) {
+    return Status("Must record at least one instruction to replay.");
+  } else if (m_current_tracepoint == m_timeline.size() - 1) {
+    return Status("Already at latest point in time.");
+  } else if (num_instructions < 1) {
+    return Status("Number of instructions to replay be at least 1.");
   }
-  if (Status error = CheckIfThreadCanReplay(num_instructions); error.Fail()) {
-    return error;
+  std::size_t newer_instructions = m_timeline.size() - m_current_tracepoint - 1;
+  if (num_instructions > m_timeline.size() - m_current_tracepoint - 1) {
+    return Status("There are only %" PRIu64 " newer instructions in history.",
+                  newer_instructions);
   }
+
+  // Restore the state at the requested point in time.
   RestoreSnapshot(m_current_tracepoint + num_instructions);
   return Status();
 }
@@ -1902,7 +1849,7 @@ ThreadPlanInstructionTracer::DisassembleInstructions(
 }
 
 bool ThreadPlanInstructionTracer::ShouldAvoidCallTarget(
-    llvm::StringRef &call_target) const {
+    llvm::StringRef call_target) const {
   // An unidentified call target often indicates a lack of debug information,
   // thus this is probably a call to an external or system library function.
   if (call_target.empty()) {
@@ -1973,6 +1920,29 @@ void ThreadPlanInstructionTracer::HandleCallTargetToAvoid(addr_t bp_addr) {
     bp->SetBreakpointKind("call-to-avoided-symbol-finished");
     bp->SetOneShot(true);
     bp->SetAutoContinue(true);
+  }
+}
+
+void ThreadPlanInstructionTracer::HandleCallInstruction(
+    Instruction &call_inst, Instruction &inst_after_call) {
+  const auto get_opcode_address = [&](const Instruction &instruction) {
+    return instruction.GetAddress().GetOpcodeLoadAddress(m_target);
+  };
+
+  const std::string call_target = GetDemangledCallTarget(m_thread, call_inst);
+
+  if (m_thread.GetTracingJumpOverDeallocationFunctions() &&
+      IsDeallocationFunction(call_target)) {
+    const std::size_t call_opcode_size = call_inst.GetOpcode().GetByteSize();
+    Status error = BackUpAndReplaceOpcodeWithNOP(m_thread,
+                                                 get_opcode_address(call_inst),
+                                                 call_opcode_size);
+    if (error.Fail()) {
+      FormatError("Failed to replace call to deallocation function: {0}",
+                  error.AsCString());
+    }
+  } else if (ShouldAvoidCallTarget(call_target)) {
+    HandleCallTargetToAvoid(get_opcode_address(inst_after_call));
   }
 }
 
@@ -2070,40 +2040,22 @@ void ThreadPlanInstructionTracer::Log() {
 
   // The tracer disassembles two instructions at a time, since the instruction
   // directly after the current one will be needed in case the thread is
-  // currently stopped at a call that shall not be executed in single-step mode
-  // and traced (see `HandleCallTargetToAvoid()` for more details).
+  // currently stopped at a call that needs additional handling (see below).
   llvm::Expected<InstructionList &> inst_list = DisassembleInstructions(2);
   if (!inst_list) {
     FormatError(llvm::toString(std::move(inst_list.takeError())));
     return;
   }
 
-  // Check if the current instruction needs special handling, e.g.:
+  // Check if the current instruction needs special handling, that is:
   //   - Calls a deallocation function that should not be executed.
   //   - Calls a function that should be executed, but not be traced.
   //   - May store.
-  Instruction &curr_inst = *inst_list->GetInstructionAtIndex(0);
-  if (curr_inst.IsCall()) {
-    llvm::StringRef call_target = GetDemangledCallTarget(m_thread, curr_inst);
-    const Instruction &inst_after_call = *inst_list->GetInstructionAtIndex(1);
-    const addr_t call_inst_addr =
-        curr_inst.GetAddress().GetOpcodeLoadAddress(m_target);
-    const addr_t next_inst_addr =
-        inst_after_call.GetAddress().GetOpcodeLoadAddress(m_target);
-
-    if (m_thread.GetTracingJumpOverDeallocationFunctions() &&
-        IsDeallocationFunction(call_target)) {
-      const std::size_t call_opcode_size = curr_inst.GetOpcode().GetByteSize();
-      Status error = BackUpAndReplaceOpcodeWithNOP(m_thread, call_inst_addr,
-                                                   call_opcode_size);
-      if (error.Fail()) {
-        FormatError("Failed to replace call to deallocation function: {0}",
-                    error.AsCString());
-      }
-    } else if (ShouldAvoidCallTarget(call_target)) {
-      HandleCallTargetToAvoid(next_inst_addr);
-    }
-  } else if (curr_inst.MayStore()) {
-    HandleInstructionThatMayStore(curr_inst);
+  Instruction &current_instruction = *inst_list->GetInstructionAtIndex(0);
+  if (current_instruction.IsCall()) {
+    Instruction &next_instruction = *inst_list->GetInstructionAtIndex(1);
+    HandleCallInstruction(current_instruction, next_instruction);
+  } else if (current_instruction.MayStore()) {
+    HandleInstructionThatMayStore(current_instruction);
   }
 }

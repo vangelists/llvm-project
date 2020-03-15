@@ -1871,7 +1871,30 @@ protected:
     stream.PutCString(cmd_result.GetOutputData());
   }
 
+  Thread::TracepointID ExtractTracepointID(
+      llvm::Optional<Thread::TracepointID> tracepoint_id_opt) {
+    return ExtractOption(tracepoint_id_opt, Thread::InvalidTracepointID);
+  }
+
+  std::size_t ExtractStepCount(llvm::Optional<std::size_t> step_count_opt) {
+    return ExtractOption(step_count_opt, static_cast<std::size_t>(1));
+  }
+
+  addr_t ExtractAddress(llvm::Optional<addr_t> address_opt) {
+    return ExtractOption(address_opt, LLDB_INVALID_ADDRESS);
+  }
+
+  uint32_t ExtractLineNumber(llvm::Optional<uint32_t> line_opt) {
+    return ExtractOption(line_opt, LLDB_INVALID_LINE_NUMBER);
+  }
+
 private:
+  template<typename OptionType>
+  OptionType ExtractOption(llvm::Optional<OptionType> option,
+                           OptionType default_value) {
+    return option ? *option : default_value;
+  }
+
   static constexpr uint32_t m_command_flags = eCommandRequiresProcess |
                                               eCommandRequiresThread |
                                               eCommandRequiresFrame |
@@ -2038,8 +2061,8 @@ public:
         m_tracepoint_id.emplace();
         if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
           m_tracepoint_id.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid tracepoint ID: '%s'.", option_arg_string);
+          return Status("Invalid tracepoint ID: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2055,7 +2078,7 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_create_options);
     }
 
-    llvm::Optional<int64_t> m_tracepoint_id;
+    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
     std::string m_tracepoint_name;
   };
 
@@ -2122,7 +2145,7 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_tracepoint_id = Thread::InvalidTracepointID;
+      m_tracepoint_id.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -2130,9 +2153,11 @@ public:
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
       case 't':
-        if (option_arg.getAsInteger(0, m_tracepoint_id)) {
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid tracepoint ID: '%s'.", option_arg_string);
+        m_tracepoint_id.emplace();
+        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
+          m_tracepoint_id.reset();
+          return Status("Invalid tracepoint ID: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2145,7 +2170,7 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_delete_options);
     }
 
-    int64_t m_tracepoint_id;
+    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
   };
 
   CommandObjectThreadTracingBookmarkDelete(CommandInterpreter &interpreter)
@@ -2165,7 +2190,9 @@ protected:
       return false;
     }
 
-    const Thread::TracepointID location = m_options.m_tracepoint_id;
+    const Thread::TracepointID location =
+        ExtractTracepointID(m_options.m_tracepoint_id);
+
     Status error = m_exe_ctx.GetThreadPtr()->DeleteTracingBookmark(location);
     if (error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark deletion failed: {0}",
@@ -2210,8 +2237,8 @@ public:
         m_tracepoint_id.emplace();
         if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
           m_tracepoint_id.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid tracepoint ID: '%s'.", option_arg_string);
+          return Status("Invalid tracepoint ID: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2224,7 +2251,7 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_list_options);
     }
 
-    llvm::Optional<int64_t> m_tracepoint_id;
+    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
   };
 
   CommandObjectThreadTracingBookmarkList(CommandInterpreter &interpreter)
@@ -2296,7 +2323,7 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_tracepoint_id = Thread::InvalidTracepointID;
+      m_tracepoint_id.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -2304,9 +2331,11 @@ public:
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
       case 't':
-        if (option_arg.getAsInteger(0, m_tracepoint_id)) {
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid tracepoint ID: '%s'.", option_arg_string);
+        m_tracepoint_id.emplace();
+        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
+          m_tracepoint_id.reset();
+          return Status("Invalid tracepoint ID: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2319,7 +2348,7 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_jump_options);
     }
 
-    int64_t m_tracepoint_id;
+    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
   };
 
   CommandObjectThreadTracingBookmarkJump(CommandInterpreter &interpreter)
@@ -2340,7 +2369,8 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
-    const Thread::TracepointID location = m_options.m_tracepoint_id;
+    const Thread::TracepointID location =
+        ExtractTracepointID(m_options.m_tracepoint_id);
 
     if (Status error = thread.JumpToTracingBookmark(location); error.Fail()) {
       result.AppendErrorWithFormatv("Jump to bookmark failed: {0}",
@@ -2393,8 +2423,8 @@ public:
         m_tracepoint_id.emplace();
         if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
           m_tracepoint_id.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid tracepoint ID: '%s'.", option_arg_string);
+          return Status("Invalid tracepoint ID: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2410,7 +2440,7 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_rename_options);
     }
 
-    llvm::Optional<int64_t> m_tracepoint_id;
+    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
     std::string m_tracepoint_name;
   };
 
@@ -2480,8 +2510,8 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_source_tracepoint_id = Thread::InvalidTracepointID;
-      m_destination_tracepoint_id = Thread::InvalidTracepointID;
+      m_source_tracepoint_id.reset();
+      m_destination_tracepoint_id.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -2489,14 +2519,18 @@ public:
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
       case 's':
-        if (option_arg.getAsInteger(0, m_source_tracepoint_id)) {
+        m_source_tracepoint_id.emplace();
+        if (option_arg.getAsInteger(0, *m_source_tracepoint_id)) {
+          m_source_tracepoint_id.reset();
           return Status("Invalid source tracepoint ID: '%s'.",
                         option_arg.str().c_str());
         } else {
           return Status();
         }
       case 'd':
-        if (option_arg.getAsInteger(0, m_destination_tracepoint_id)) {
+        m_destination_tracepoint_id.emplace();
+        if (option_arg.getAsInteger(0, *m_destination_tracepoint_id)) {
+          m_destination_tracepoint_id.reset();
           return Status("Invalid destination tracepoint ID: '%s'.",
                         option_arg.str().c_str());
         } else {
@@ -2511,8 +2545,8 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_move_options);
     }
 
-    int64_t m_source_tracepoint_id;
-    int64_t m_destination_tracepoint_id;
+    llvm::Optional<Thread::TracepointID> m_source_tracepoint_id;
+    llvm::Optional<Thread::TracepointID> m_destination_tracepoint_id;
   };
 
   CommandObjectThreadTracingBookmarkMove(CommandInterpreter &interpreter)
@@ -2533,9 +2567,10 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
-    const Thread::TracepointID source = m_options.m_source_tracepoint_id;
+    const Thread::TracepointID source =
+        ExtractTracepointID(m_options.m_source_tracepoint_id);
     const Thread::TracepointID destination =
-        m_options.m_destination_tracepoint_id;
+        ExtractTracepointID(m_options.m_destination_tracepoint_id);
 
     llvm::Expected<const Thread::TracingBookmark &> bookmark =
         thread.GetTracingBookmark(source);
@@ -2640,7 +2675,7 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_requested_steps.reset();
+      m_step_count.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -2648,11 +2683,11 @@ public:
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
       case 'c':
-        m_requested_steps.emplace();
-        if (option_arg.getAsInteger(0, *m_requested_steps)) {
-          m_requested_steps.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid statement count: '%s'.", option_arg_string);
+        m_step_count.emplace();
+        if (option_arg.getAsInteger(0, *m_step_count)) {
+          m_step_count.reset();
+          return Status("Invalid statement count: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2665,7 +2700,7 @@ public:
       return llvm::makeArrayRef(g_thread_step_back_statement_options);
     }
 
-    llvm::Optional<int64_t> m_requested_steps;
+    llvm::Optional<std::size_t> m_step_count;
   };
 
   CommandObjectThreadStepBackStatement(CommandInterpreter &interpreter)
@@ -2685,11 +2720,9 @@ protected:
       return false;
     }
 
-    llvm::Optional<int64_t> requested_steps_opt = m_options.m_requested_steps;
-    const std::size_t num_steps = requested_steps_opt ? *requested_steps_opt
-                                                      : 1;
+    const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBack(num_steps);
+    Status error = m_exe_ctx.GetThreadPtr()->StepBack(step_count);
     if (error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -2697,8 +2730,8 @@ protected:
     }
 
     StreamString stop_reason;
-    stop_reason.Format("step back {0} {1}", num_steps,
-                       num_steps > 1 ? "statements" : "statement");
+    stop_reason.Format("step back {0} {1}", step_count,
+                       step_count > 1 ? "statements" : "statement");
     PrintStopLocationInfo(stop_reason.GetString(), result);
 
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
@@ -2724,7 +2757,7 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_requested_steps.reset();
+      m_step_count.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -2732,11 +2765,11 @@ public:
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
       case 'c':
-        m_requested_steps.emplace();
-        if (option_arg.getAsInteger(0, *m_requested_steps)) {
-          m_requested_steps.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid instruction count: '%s'.", option_arg_string);
+        m_step_count.emplace();
+        if (option_arg.getAsInteger(0, *m_step_count)) {
+          m_step_count.reset();
+          return Status("Invalid instruction count: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2749,7 +2782,7 @@ public:
       return llvm::makeArrayRef(g_thread_step_back_instruction_options);
     }
 
-    llvm::Optional<int64_t> m_requested_steps;
+    llvm::Optional<std::size_t> m_step_count;
   };
 
   CommandObjectThreadStepBackInstruction(CommandInterpreter &interpreter)
@@ -2769,11 +2802,9 @@ protected:
       return false;
     }
 
-    llvm::Optional<int64_t> requested_steps_opt = m_options.m_requested_steps;
-    const std::size_t num_steps = requested_steps_opt ? *requested_steps_opt
-                                                      : 1;
+    const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBackInstruction(num_steps);
+    Status error = m_exe_ctx.GetThreadPtr()->StepBackInstruction(step_count);
     if (error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -2781,8 +2812,8 @@ protected:
     }
 
     StreamString stop_reason;
-    stop_reason.Format("step back {0} {1}", num_steps,
-                       num_steps > 1 ? "instructions" : "instruction");
+    stop_reason.Format("step back {0} {1}", step_count,
+                       step_count > 1 ? "instructions" : "instruction");
     PrintStopLocationInfo(stop_reason.GetString(), result);
 
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
@@ -2819,8 +2850,8 @@ public:
         m_target_address.emplace();
         if (option_arg.getAsInteger(0, *m_target_address)) {
           m_target_address.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid target address: '%s'.", option_arg_string);
+          return Status("Invalid target address: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2833,7 +2864,7 @@ public:
       return llvm::makeArrayRef(g_thread_step_back_until_address_options);
     }
 
-    llvm::Optional<lldb::addr_t> m_target_address;
+    llvm::Optional<addr_t> m_target_address;
   };
 
   CommandObjectThreadStepBackUntilAddress(CommandInterpreter &interpreter)
@@ -2854,8 +2885,7 @@ protected:
       return false;
     }
 
-    llvm::Optional<addr_t> target_pc_opt = m_options.m_target_address;
-    const addr_t target_pc = target_pc_opt ? *target_pc_opt : 1;
+    const addr_t target_pc = ExtractAddress(m_options.m_target_address);
 
     Status error = m_exe_ctx.GetThreadPtr()->StepBackUntilAddress(target_pc);
     if (error.Fail()) {
@@ -2902,8 +2932,7 @@ public:
         m_target_line.emplace();
         if (option_arg.getAsInteger(0, *m_target_line)) {
           m_target_line.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid target line: '%s'.", option_arg_string);
+          return Status("Invalid target line: '%s'.", option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -2936,8 +2965,7 @@ protected:
       return false;
     }
 
-    llvm::Optional<uint32_t> target_line_opt = m_options.m_target_line;
-    const uint32_t target_line = target_line_opt ? *target_line_opt : 1;
+    const uint32_t target_line = ExtractLineNumber(m_options.m_target_line);
 
     Status error = m_exe_ctx.GetThreadPtr()->StepBackUntilLine(target_line);
     if (error.Fail()) {
@@ -3071,7 +3099,7 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_requested_steps.reset();
+      m_step_count.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -3079,11 +3107,11 @@ public:
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
       case 'c':
-        m_requested_steps.emplace();
-        if (option_arg.getAsInteger(0, *m_requested_steps)) {
-          m_requested_steps.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid statement count: '%s'.", option_arg_string);
+        m_step_count.emplace();
+        if (option_arg.getAsInteger(0, *m_step_count)) {
+          m_step_count.reset();
+          return Status("Invalid statement count: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -3096,7 +3124,7 @@ public:
       return llvm::makeArrayRef(g_thread_replay_statement_options);
     }
 
-    llvm::Optional<int64_t> m_requested_steps;
+    llvm::Optional<std::size_t> m_step_count;
   };
 
   CommandObjectThreadReplayStatement(CommandInterpreter &interpreter)
@@ -3116,11 +3144,9 @@ protected:
       return false;
     }
 
-    llvm::Optional<int64_t> requested_steps_opt = m_options.m_requested_steps;
-    const std::size_t num_steps = requested_steps_opt ? *requested_steps_opt
-                                                      : 1;
+    const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->Replay(num_steps);
+    Status error = m_exe_ctx.GetThreadPtr()->Replay(step_count);
     if (error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -3128,8 +3154,8 @@ protected:
     }
 
     StreamString stop_reason;
-    stop_reason.Format("replay {0} {1}", num_steps,
-                       num_steps > 1 ? "statements" : "statement");
+    stop_reason.Format("replay {0} {1}", step_count,
+                       step_count > 1 ? "statements" : "statement");
     PrintStopLocationInfo(stop_reason.GetString(), result);
 
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
@@ -3155,7 +3181,7 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_requested_steps.reset();
+      m_step_count.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -3163,11 +3189,11 @@ public:
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
       case 'c':
-        m_requested_steps.emplace();
-        if (option_arg.getAsInteger(0, *m_requested_steps)) {
-          m_requested_steps.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid instruction count: '%s'.", option_arg_string);
+        m_step_count.emplace();
+        if (option_arg.getAsInteger(0, *m_step_count)) {
+          m_step_count.reset();
+          return Status("Invalid instruction count: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -3180,7 +3206,7 @@ public:
       return llvm::makeArrayRef(g_thread_replay_instruction_options);
     }
 
-    llvm::Optional<int64_t> m_requested_steps;
+    llvm::Optional<std::size_t> m_step_count;
   };
 
   CommandObjectThreadReplayInstruction(CommandInterpreter &interpreter)
@@ -3200,11 +3226,9 @@ protected:
       return false;
     }
 
-    llvm::Optional<int64_t> requested_steps_opt = m_options.m_requested_steps;
-    const std::size_t num_steps = requested_steps_opt ? *requested_steps_opt
-                                                      : 1;
+    const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->ReplayInstruction(num_steps);
+    Status error = m_exe_ctx.GetThreadPtr()->ReplayInstruction(step_count);
     if (error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -3212,8 +3236,8 @@ protected:
     }
 
     StreamString stop_reason;
-    stop_reason.Format("replay {0} {1}", num_steps,
-                       num_steps > 1 ? "instructions" : "instruction");
+    stop_reason.Format("replay {0} {1}", step_count,
+                       step_count > 1 ? "instructions" : "instruction");
     PrintStopLocationInfo(stop_reason.GetString(), result);
 
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
@@ -3250,8 +3274,8 @@ public:
         m_target_address.emplace();
         if (option_arg.getAsInteger(0, *m_target_address)) {
           m_target_address.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid target address: '%s'.", option_arg_string);
+          return Status("Invalid target address: '%s'.",
+                        option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -3284,8 +3308,7 @@ protected:
       return false;
     }
 
-    llvm::Optional<addr_t> target_pc_opt = m_options.m_target_address;
-    const addr_t target_pc = target_pc_opt ? *target_pc_opt : 1;
+    const addr_t target_pc = ExtractAddress(m_options.m_target_address);
 
     Status error = m_exe_ctx.GetThreadPtr()->ReplayUntilAddress(target_pc);
     if (error.Fail()) {
@@ -3332,8 +3355,7 @@ public:
         m_target_line.emplace();
         if (option_arg.getAsInteger(0, *m_target_line)) {
           m_target_line.reset();
-          const char *option_arg_string = option_arg.str().c_str();
-          return Status("Invalid target line: '%s'.", option_arg_string);
+          return Status("Invalid target line: '%s'.", option_arg.str().c_str());
         } else {
           return Status();
         }
@@ -3366,8 +3388,7 @@ protected:
       return false;
     }
 
-    llvm::Optional<uint32_t> target_line_opt = m_options.m_target_line;
-    const uint32_t target_line = target_line_opt ? *target_line_opt : 1;
+    const uint32_t target_line = ExtractLineNumber(m_options.m_target_line);
 
     Status error = m_exe_ctx.GetThreadPtr()->ReplayUntilLine(target_line);
     if (error.Fail()) {
