@@ -12,6 +12,7 @@
 
 #include "clang/AST/OpenMPClause.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclOpenMP.h"
 #include "clang/Basic/LLVM.h"
@@ -328,6 +329,39 @@ Expr *OMPOrderedClause::getLoopCounter(unsigned NumLoop) {
 const Expr *OMPOrderedClause::getLoopCounter(unsigned NumLoop) const {
   assert(NumLoop < NumberOfLoops && "out of loops number.");
   return getTrailingObjects<Expr *>()[NumberOfLoops + NumLoop];
+}
+
+OMPUpdateClause *OMPUpdateClause::Create(const ASTContext &C,
+                                         SourceLocation StartLoc,
+                                         SourceLocation EndLoc) {
+  return new (C) OMPUpdateClause(StartLoc, EndLoc, /*IsExtended=*/false);
+}
+
+OMPUpdateClause *
+OMPUpdateClause::Create(const ASTContext &C, SourceLocation StartLoc,
+                        SourceLocation LParenLoc, SourceLocation ArgumentLoc,
+                        OpenMPDependClauseKind DK, SourceLocation EndLoc) {
+  void *Mem =
+      C.Allocate(totalSizeToAlloc<SourceLocation, OpenMPDependClauseKind>(2, 1),
+                 alignof(OMPUpdateClause));
+  auto *Clause =
+      new (Mem) OMPUpdateClause(StartLoc, EndLoc, /*IsExtended=*/true);
+  Clause->setLParenLoc(LParenLoc);
+  Clause->setArgumentLoc(ArgumentLoc);
+  Clause->setDependencyKind(DK);
+  return Clause;
+}
+
+OMPUpdateClause *OMPUpdateClause::CreateEmpty(const ASTContext &C,
+                                              bool IsExtended) {
+  if (!IsExtended)
+    return new (C) OMPUpdateClause(/*IsExtended=*/false);
+  void *Mem =
+      C.Allocate(totalSizeToAlloc<SourceLocation, OpenMPDependClauseKind>(2, 1),
+                 alignof(OMPUpdateClause));
+  auto *Clause = new (Mem) OMPUpdateClause(/*IsExtended=*/true);
+  Clause->IsExtended = true;
+  return Clause;
 }
 
 void OMPPrivateClause::setPrivateCopies(ArrayRef<Expr *> VL) {
@@ -1349,8 +1383,14 @@ void OMPClausePrinter::VisitOMPReadClause(OMPReadClause *) { OS << "read"; }
 
 void OMPClausePrinter::VisitOMPWriteClause(OMPWriteClause *) { OS << "write"; }
 
-void OMPClausePrinter::VisitOMPUpdateClause(OMPUpdateClause *) {
+void OMPClausePrinter::VisitOMPUpdateClause(OMPUpdateClause *Node) {
   OS << "update";
+  if (Node->isExtended()) {
+    OS << "(";
+    OS << getOpenMPSimpleClauseTypeName(Node->getClauseKind(),
+                                        Node->getDependencyKind());
+    OS << ")";
+  }
 }
 
 void OMPClausePrinter::VisitOMPCaptureClause(OMPCaptureClause *) {

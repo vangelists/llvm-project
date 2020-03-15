@@ -14,13 +14,12 @@
 #ifndef LLVM_ANALYSIS_LOOPNESTANALYSIS_H
 #define LLVM_ANALYSIS_LOOPNESTANALYSIS_H
 
-#include "llvm/Analysis/LoopPass.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Transforms/Scalar/LoopPassManager.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
 
 namespace llvm {
 
 using LoopVectorTy = SmallVector<Loop *, 8>;
+class LPMUpdater;
 
 /// This class represents a loop nest and can be used to query its properties.
 class LoopNest {

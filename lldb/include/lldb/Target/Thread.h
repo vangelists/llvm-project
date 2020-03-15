@@ -1573,7 +1573,7 @@ protected:
 
   void SetCompletedPlanStack(ThreadPlanStack &completed_plan_stack);
 
-  virtual lldb_private::Unwind *GetUnwinder();
+  virtual Unwind &GetUnwinder();
 
   // Check to see whether the thread is still at the last breakpoint hit that
   // stopped it.

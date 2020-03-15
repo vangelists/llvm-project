@@ -4502,7 +4502,7 @@ ASTReader::ReadASTCore(StringRef FileName,
     if (ShouldFinalizePCM)
       MC.finalizePCM(FileName);
     else
-      MC.tryToRemovePCM(FileName);
+      MC.tryToDropPCM(FileName);
   });
   ModuleFile &F = *M;
   BitstreamCursor &Stream = F.Stream;
@@ -8491,10 +8491,10 @@ unsigned ASTReader::getModuleFileID(ModuleFile *F) {
   return (I - PCHModules.end()) << 1;
 }
 
-llvm::Optional<ExternalASTSource::ASTSourceDescriptor>
+llvm::Optional<ASTSourceDescriptor>
 ASTReader::getSourceDescriptor(unsigned ID) {
   if (const Module *M = getSubmodule(ID))
-    return ExternalASTSource::ASTSourceDescriptor(*M);
+    return ASTSourceDescriptor(*M);
 
   // If there is only a single PCH, return it instead.
   // Chained PCH are not supported.
@@ -8503,8 +8503,8 @@ ASTReader::getSourceDescriptor(unsigned ID) {
     ModuleFile &MF = ModuleMgr.getPrimaryModule();
     StringRef ModuleName = llvm::sys::path::filename(MF.OriginalSourceFileName);
     StringRef FileName = llvm::sys::path::filename(MF.FileName);
-    return ASTReader::ASTSourceDescriptor(ModuleName, MF.OriginalDir, FileName,
-                                          MF.Signature);
+    return ASTSourceDescriptor(ModuleName, MF.OriginalDir, FileName,
+                               MF.Signature);
   }
   return None;
 }
@@ -11657,7 +11657,7 @@ OMPClause *OMPClauseReader::readClause() {
     C = new (Context) OMPWriteClause();
     break;
   case OMPC_update:
-    C = new (Context) OMPUpdateClause();
+    C = OMPUpdateClause::CreateEmpty(Context, Record.readInt());
     break;
   case OMPC_capture:
     C = new (Context) OMPCaptureClause();
@@ -11938,7 +11938,13 @@ void OMPClauseReader::VisitOMPReadClause(OMPReadClause *) {}
 
 void OMPClauseReader::VisitOMPWriteClause(OMPWriteClause *) {}
 
-void OMPClauseReader::VisitOMPUpdateClause(OMPUpdateClause *) {}
+void OMPClauseReader::VisitOMPUpdateClause(OMPUpdateClause *C) {
+  if (C->isExtended()) {
+    C->setLParenLoc(Record.readSourceLocation());
+    C->setArgumentLoc(Record.readSourceLocation());
+    C->setDependencyKind(Record.readEnum<OpenMPDependClauseKind>());
+  }
+}
 
 void OMPClauseReader::VisitOMPCaptureClause(OMPCaptureClause *) {}
 

@@ -41,6 +41,21 @@
 namespace clang {
 namespace clangd {
 namespace {
+
+// LSP defines file versions as numbers that increase.
+// ClangdServer treats them as opaque and therefore uses strings instead.
+std::string encodeVersion(int64_t LSPVersion) {
+  return llvm::to_string(LSPVersion);
+}
+llvm::Optional<int64_t> decodeVersion(llvm::StringRef Encoded) {
+  int64_t Result;
+  if (llvm::to_integer(Encoded, Result, 10))
+    return Result;
+  else if (!Encoded.empty()) // Empty can be e.g. diagnostics on close.
+    elog("unexpected non-numeric version {0}", Encoded);
+  return llvm::None;
+}
+
 /// Transforms a tweak into a code action that would apply it if executed.
 /// EXPECTS: T.prepare() was called and returned true.
 CodeAction toCodeAction(const ClangdServer::TweakRef &T, const URIForFile &File,
@@ -117,7 +132,7 @@ llvm::Error validateEdits(const DraftStore &DraftMgr, const FileEdits &FE) {
       // If the file is open in user's editor, make sure the version we
       // saw and current version are compatible as this is the text that
       // will be replaced by editors.
-      if (!It.second.canApplyTo(*Draft)) {
+      if (!It.second.canApplyTo(Draft->Contents)) {
         ++InvalidFileCount;
         LastInvalidFile = It.first();
       }
@@ -630,8 +645,9 @@ void ClangdLSPServer::onDocumentDidOpen(
 
   const std::string &Contents = Params.textDocument.text;
 
-  DraftMgr.addDraft(File, Contents);
-  Server->addDocument(File, Contents, WantDiagnostics::Yes);
+  auto Version = DraftMgr.addDraft(File, Params.textDocument.version, Contents);
+  Server->addDocument(File, Contents, encodeVersion(Version),
+                      WantDiagnostics::Yes);
 }
 
 void ClangdLSPServer::onDocumentDidChange(
@@ -642,19 +658,20 @@ void ClangdLSPServer::onDocumentDidChange(
                                                   : WantDiagnostics::No;
 
   PathRef File = Params.textDocument.uri.file();
-  llvm::Expected<std::string> Contents =
-      DraftMgr.updateDraft(File, Params.contentChanges);
-  if (!Contents) {
+  llvm::Expected<DraftStore::Draft> Draft = DraftMgr.updateDraft(
+      File, Params.textDocument.version, Params.contentChanges);
+  if (!Draft) {
     // If this fails, we are most likely going to be not in sync anymore with
     // the client.  It is better to remove the draft and let further operations
     // fail rather than giving wrong results.
     DraftMgr.removeDraft(File);
     Server->removeDocument(File);
-    elog("Failed to update {0}: {1}", File, Contents.takeError());
+    elog("Failed to update {0}: {1}", File, Draft.takeError());
     return;
   }
 
-  Server->addDocument(File, *Contents, WantDiags, Params.forceRebuild);
+  Server->addDocument(File, Draft->Contents, encodeVersion(Draft->Version),
+                      WantDiags, Params.forceRebuild);
 }
 
 void ClangdLSPServer::onFileEvent(const DidChangeWatchedFilesParams &Params) {
@@ -773,8 +790,7 @@ void ClangdLSPServer::onPrepareRename(const TextDocumentPositionParams &Params,
 void ClangdLSPServer::onRename(const RenameParams &Params,
                                Callback<WorkspaceEdit> Reply) {
   Path File = std::string(Params.textDocument.uri.file());
-  llvm::Optional<std::string> Code = DraftMgr.getDraft(File);
-  if (!Code)
+  if (!DraftMgr.getDraft(File))
     return Reply(llvm::make_error<LSPError>(
         "onRename called for non-added file", ErrorCode::InvalidParams));
   Server->rename(
@@ -829,7 +845,7 @@ void ClangdLSPServer::onDocumentOnTypeFormatting(
         "onDocumentOnTypeFormatting called for non-added file",
         ErrorCode::InvalidParams));
 
-  Reply(Server->formatOnType(*Code, File, Params.position, Params.ch));
+  Reply(Server->formatOnType(Code->Contents, File, Params.position, Params.ch));
 }
 
 void ClangdLSPServer::onDocumentRangeFormatting(
@@ -842,9 +858,10 @@ void ClangdLSPServer::onDocumentRangeFormatting(
         "onDocumentRangeFormatting called for non-added file",
         ErrorCode::InvalidParams));
 
-  auto ReplacementsOrError = Server->formatRange(*Code, File, Params.range);
+  auto ReplacementsOrError =
+      Server->formatRange(Code->Contents, File, Params.range);
   if (ReplacementsOrError)
-    Reply(replacementsToEdits(*Code, ReplacementsOrError.get()));
+    Reply(replacementsToEdits(Code->Contents, ReplacementsOrError.get()));
   else
     Reply(ReplacementsOrError.takeError());
 }
@@ -859,9 +876,9 @@ void ClangdLSPServer::onDocumentFormatting(
         "onDocumentFormatting called for non-added file",
         ErrorCode::InvalidParams));
 
-  auto ReplacementsOrError = Server->formatFile(*Code, File);
+  auto ReplacementsOrError = Server->formatFile(Code->Contents, File);
   if (ReplacementsOrError)
-    Reply(replacementsToEdits(*Code, ReplacementsOrError.get()));
+    Reply(replacementsToEdits(Code->Contents, ReplacementsOrError.get()));
   else
     Reply(ReplacementsOrError.takeError());
 }
@@ -1328,7 +1345,7 @@ bool ClangdLSPServer::shouldRunCompletion(
   // Running the lexer here would be more robust (e.g. we can detect comments
   // and avoid triggering completion there), but we choose to err on the side
   // of simplicity here.
-  auto Offset = positionToOffset(*Code, Params.position,
+  auto Offset = positionToOffset(Code->Contents, Params.position,
                                  /*AllowColumnsBeyondLineLength=*/false);
   if (!Offset) {
     vlog("could not convert position '{0}' to offset for file '{1}'",
@@ -1339,15 +1356,16 @@ bool ClangdLSPServer::shouldRunCompletion(
     return false;
 
   if (Trigger == ">")
-    return (*Code)[*Offset - 2] == '-'; // trigger only on '->'.
+    return Code->Contents[*Offset - 2] == '-'; // trigger only on '->'.
   if (Trigger == ":")
-    return (*Code)[*Offset - 2] == ':'; // trigger only on '::'.
+    return Code->Contents[*Offset - 2] == ':'; // trigger only on '::'.
   assert(false && "unhandled trigger character");
   return true;
 }
 
 void ClangdLSPServer::onHighlightingsReady(
-    PathRef File, std::vector<HighlightingToken> Highlightings) {
+    PathRef File, llvm::StringRef Version,
+    std::vector<HighlightingToken> Highlightings) {
   std::vector<HighlightingToken> Old;
   std::vector<HighlightingToken> HighlightingsCopy = Highlightings;
   {
@@ -1358,14 +1376,18 @@ void ClangdLSPServer::onHighlightingsReady(
   // LSP allows us to send incremental edits of highlightings. Also need to diff
   // to remove highlightings from tokens that should no longer have them.
   std::vector<LineHighlightings> Diffed = diffHighlightings(Highlightings, Old);
-  publishSemanticHighlighting(
-      {{URIForFile::canonicalize(File, /*TUPath=*/File)},
-       toSemanticHighlightingInformation(Diffed)});
+  SemanticHighlightingParams Notification;
+  Notification.TextDocument.uri =
+      URIForFile::canonicalize(File, /*TUPath=*/File);
+  Notification.TextDocument.version = decodeVersion(Version);
+  Notification.Lines = toSemanticHighlightingInformation(Diffed);
+  publishSemanticHighlighting(Notification);
 }
 
-void ClangdLSPServer::onDiagnosticsReady(PathRef File,
+void ClangdLSPServer::onDiagnosticsReady(PathRef File, llvm::StringRef Version,
                                          std::vector<Diag> Diagnostics) {
   PublishDiagnosticsParams Notification;
+  Notification.version = decodeVersion(Version);
   Notification.uri = URIForFile::canonicalize(File, /*TUPath=*/File);
   DiagnosticToReplacementMap LocalFixIts; // Temporary storage
   for (auto &Diag : Diagnostics) {
@@ -1475,8 +1497,10 @@ void ClangdLSPServer::reparseOpenedFiles(
   // Reparse only opened files that were modified.
   for (const Path &FilePath : DraftMgr.getActiveFiles())
     if (ModifiedFiles.find(FilePath) != ModifiedFiles.end())
-      Server->addDocument(FilePath, *DraftMgr.getDraft(FilePath),
-                          WantDiagnostics::Auto);
+      if (auto Draft = DraftMgr.getDraft(FilePath)) // else disappeared in race?
+        Server->addDocument(FilePath, std::move(Draft->Contents),
+                            encodeVersion(Draft->Version),
+                            WantDiagnostics::Auto);
 }
 
 } // namespace clangd
