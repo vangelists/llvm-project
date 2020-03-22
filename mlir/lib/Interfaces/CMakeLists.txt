@@ -3,10 +3,11 @@ set(LLVM_OPTIONAL_SOURCES
   ControlFlowInterfaces.cpp
   DerivedAttributeOpInterface.cpp
   InferTypeOpInterface.cpp
+  LoopLikeInterface.cpp
   SideEffects.cpp
   )
 
-add_llvm_library(MLIRCallInterfaces
+add_mlir_library(MLIRCallInterfaces
   CallInterfaces.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -20,7 +21,7 @@ target_link_libraries(MLIRCallInterfaces
   MLIRIR
   )
 
-add_llvm_library(MLIRControlFlowInterfaces
+add_mlir_library(MLIRControlFlowInterfaces
   ControlFlowInterfaces.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -34,7 +35,7 @@ target_link_libraries(MLIRControlFlowInterfaces
   MLIRIR
   )
 
-add_llvm_library(MLIRDerivedAttributeOpInterface
+add_mlir_library(MLIRDerivedAttributeOpInterface
   DerivedAttributeOpInterface.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -48,7 +49,7 @@ target_link_libraries(MLIRDerivedAttributeOpInterface
   MLIRIR
   )
 
-add_llvm_library(MLIRInferTypeOpInterface
+add_mlir_library(MLIRInferTypeOpInterface
   InferTypeOpInterface.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -62,7 +63,21 @@ target_link_libraries(MLIRInferTypeOpInterface
   MLIRIR
   )
 
-add_llvm_library(MLIRSideEffects
+add_mlir_library(MLIRLoopLikeInterface
+  LoopLikeInterface.cpp
+
+  ADDITIONAL_HEADER_DIRS
+  ${MLIR_MAIN_INCLUDE_DIR}/mlir/Interfaces
+  )
+add_dependencies(MLIRLoopLikeInterface
+  MLIRLoopLikeInterfaceIncGen
+  )
+target_link_libraries(MLIRLoopLikeInterface
+  PUBLIC
+  MLIRIR
+  )
+
+add_mlir_library(MLIRSideEffects
   SideEffects.cpp
 
   ADDITIONAL_HEADER_DIRS

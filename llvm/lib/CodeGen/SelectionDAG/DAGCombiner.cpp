@@ -555,6 +555,10 @@ namespace {
                               SDValue InnerPos, SDValue InnerNeg,
                               unsigned PosOpcode, unsigned NegOpcode,
                               const SDLoc &DL);
+    SDValue MatchFunnelPosNeg(SDValue N0, SDValue N1, SDValue Pos, SDValue Neg,
+                              SDValue InnerPos, SDValue InnerNeg,
+                              unsigned PosOpcode, unsigned NegOpcode,
+                              const SDLoc &DL);
     SDValue MatchRotate(SDValue LHS, SDValue RHS, const SDLoc &DL);
     SDValue MatchLoadCombine(SDNode *N);
     SDValue MatchStoreCombine(StoreSDNode *N);
@@ -6265,8 +6269,12 @@ static bool matchRotateSub(SDValue Pos, SDValue Neg, unsigned EltSize,
   //              EltSize & Mask == NegC & Mask
   //
   // (because "x & Mask" is a truncation and distributes through subtraction).
+  //
+  // We also need to account for a potential truncation of NegOp1 if the amount
+  // has already been legalized to a shift amount type.
   APInt Width;
-  if (Pos == NegOp1)
+  if ((Pos == NegOp1) ||
+      (NegOp1.getOpcode() == ISD::TRUNCATE && Pos == NegOp1.getOperand(0)))
     Width = NegC->getAPIntValue();
 
   // Check for cases where Pos has the form (add NegOp1, PosC) for some PosC.
@@ -6313,6 +6321,33 @@ SDValue DAGCombiner::MatchRotatePosNeg(SDValue Shifted, SDValue Pos,
   if (matchRotateSub(InnerPos, InnerNeg, VT.getScalarSizeInBits(), DAG)) {
     bool HasPos = TLI.isOperationLegalOrCustom(PosOpcode, VT);
     return DAG.getNode(HasPos ? PosOpcode : NegOpcode, DL, VT, Shifted,
+                       HasPos ? Pos : Neg);
+  }
+
+  return SDValue();
+}
+
+// A subroutine of MatchRotate used once we have found an OR of two opposite
+// shifts of N0 + N1.  If Neg == <operand size> - Pos then the OR reduces
+// to both (PosOpcode N0, N1, Pos) and (NegOpcode N0, N1, Neg), with the
+// former being preferred if supported.  InnerPos and InnerNeg are Pos and
+// Neg with outer conversions stripped away.
+// TODO: Merge with MatchRotatePosNeg.
+SDValue DAGCombiner::MatchFunnelPosNeg(SDValue N0, SDValue N1, SDValue Pos,
+                                       SDValue Neg, SDValue InnerPos,
+                                       SDValue InnerNeg, unsigned PosOpcode,
+                                       unsigned NegOpcode, const SDLoc &DL) {
+  // fold (or (shl x0, (*ext y)),
+  //          (srl x1, (*ext (sub 32, y)))) ->
+  //   (fshl x0, x1, y) or (fshr x0, x1, (sub 32, y))
+  //
+  // fold (or (shl x0, (*ext (sub 32, y))),
+  //          (srl x1, (*ext y))) ->
+  //   (fshr x0, x1, y) or (fshl x0, x1, (sub 32, y))
+  EVT VT = N0.getValueType();
+  if (matchRotateSub(InnerPos, InnerNeg, VT.getScalarSizeInBits(), DAG)) {
+    bool HasPos = TLI.isOperationLegalOrCustom(PosOpcode, VT);
+    return DAG.getNode(HasPos ? PosOpcode : NegOpcode, DL, VT, N0, N1,
                        HasPos ? Pos : Neg);
   }
 
@@ -6444,10 +6479,6 @@ SDValue DAGCombiner::MatchRotate(SDValue LHS, SDValue RHS, const SDLoc &DL) {
     return Res;
   }
 
-  // TODO: Handle variable funnel shifts.
-  if (!IsRotate)
-    return SDValue();
-
   // If there is a mask here, and we have a variable shift, we can't be sure
   // that we're masking out the right stuff.
   if (LHSMask.getNode() || RHSMask.getNode())
@@ -6468,13 +6499,29 @@ SDValue DAGCombiner::MatchRotate(SDValue LHS, SDValue RHS, const SDLoc &DL) {
     RExtOp0 = RHSShiftAmt.getOperand(0);
   }
 
-  SDValue TryL = MatchRotatePosNeg(LHSShiftArg, LHSShiftAmt, RHSShiftAmt,
-                                   LExtOp0, RExtOp0, ISD::ROTL, ISD::ROTR, DL);
+  if (IsRotate && (HasROTL || HasROTR)) {
+    SDValue TryL =
+        MatchRotatePosNeg(LHSShiftArg, LHSShiftAmt, RHSShiftAmt, LExtOp0,
+                          RExtOp0, ISD::ROTL, ISD::ROTR, DL);
+    if (TryL)
+      return TryL;
+
+    SDValue TryR =
+        MatchRotatePosNeg(RHSShiftArg, RHSShiftAmt, LHSShiftAmt, RExtOp0,
+                          LExtOp0, ISD::ROTR, ISD::ROTL, DL);
+    if (TryR)
+      return TryR;
+  }
+
+  SDValue TryL =
+      MatchFunnelPosNeg(LHSShiftArg, RHSShiftArg, LHSShiftAmt, RHSShiftAmt,
+                        LExtOp0, RExtOp0, ISD::FSHL, ISD::FSHR, DL);
   if (TryL)
     return TryL;
 
-  SDValue TryR = MatchRotatePosNeg(RHSShiftArg, RHSShiftAmt, LHSShiftAmt,
-                                   RExtOp0, LExtOp0, ISD::ROTR, ISD::ROTL, DL);
+  SDValue TryR =
+      MatchFunnelPosNeg(LHSShiftArg, RHSShiftArg, RHSShiftAmt, LHSShiftAmt,
+                        RExtOp0, LExtOp0, ISD::FSHR, ISD::FSHL, DL);
   if (TryR)
     return TryR;
 
@@ -8278,13 +8325,15 @@ SDValue DAGCombiner::visitFunnelShift(SDNode *N) {
     // fold (fshr ld1, ld0, c) -> (ld0[ofs]) iff ld0 and ld1 are consecutive.
     // TODO - bigendian support once we have test coverage.
     // TODO - can we merge this with CombineConseutiveLoads/MatchLoadCombine?
+    // TODO - permit LHS EXTLOAD if extensions are shifted out.
     if ((BitWidth % 8) == 0 && (ShAmt % 8) == 0 && !VT.isVector() &&
         !DAG.getDataLayout().isBigEndian()) {
       auto *LHS = dyn_cast<LoadSDNode>(N0);
       auto *RHS = dyn_cast<LoadSDNode>(N1);
       if (LHS && RHS && LHS->isSimple() && RHS->isSimple() &&
           LHS->getAddressSpace() == RHS->getAddressSpace() &&
-          (LHS->hasOneUse() || RHS->hasOneUse()) && ISD::isNON_EXTLoad(RHS)) {
+          (LHS->hasOneUse() || RHS->hasOneUse()) && ISD::isNON_EXTLoad(RHS) &&
+          ISD::isNON_EXTLoad(LHS)) {
         if (DAG.areNonVolatileConsecutiveLoads(LHS, RHS, BitWidth / 8, 1)) {
           SDLoc DL(RHS);
           uint64_t PtrOff =
@@ -10976,7 +11025,9 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
 
   // Attempt to pre-truncate BUILD_VECTOR sources.
   if (N0.getOpcode() == ISD::BUILD_VECTOR && !LegalOperations &&
-      TLI.isTruncateFree(SrcVT.getScalarType(), VT.getScalarType())) {
+      TLI.isTruncateFree(SrcVT.getScalarType(), VT.getScalarType()) &&
+      // Avoid creating illegal types if running after type legalizer.
+      (!LegalTypes || TLI.isTypeLegal(VT.getScalarType()))) {
     SDLoc DL(N);
     EVT SVT = VT.getScalarType();
     SmallVector<SDValue, 8> TruncOps;
@@ -11936,13 +11987,24 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
     return SDValue();
   };
 
-  // fold (fsub (fmul x, y), z) -> (fma x, y, (fneg z))
-  if (SDValue V = tryToFoldXYSubZ(N0, N1))
-    return V;
-
-  // fold (fsub x, (fmul y, z)) -> (fma (fneg y), z, x)
-  if (SDValue V = tryToFoldXSubYZ(N0, N1))
-    return V;
+  // If we have two choices trying to fold (fsub (fmul u, v), (fmul x, y)),
+  // prefer to fold the multiply with fewer uses.
+  if (isContractableFMUL(N0) && isContractableFMUL(N1) &&
+      (N0.getNode()->use_size() > N1.getNode()->use_size())) {
+    // fold (fsub (fmul a, b), (fmul c, d)) -> (fma (fneg c), d, (fmul a, b))
+    if (SDValue V = tryToFoldXSubYZ(N0, N1))
+      return V;
+    // fold (fsub (fmul a, b), (fmul c, d)) -> (fma a, b, (fneg (fmul c, d)))
+    if (SDValue V = tryToFoldXYSubZ(N0, N1))
+      return V;
+  } else {
+    // fold (fsub (fmul x, y), z) -> (fma x, y, (fneg z))
+    if (SDValue V = tryToFoldXYSubZ(N0, N1))
+      return V;
+    // fold (fsub x, (fmul y, z)) -> (fma (fneg y), z, x)
+    if (SDValue V = tryToFoldXSubYZ(N0, N1))
+      return V;
+  }
 
   // fold (fsub (fneg (fmul, x, y)), z) -> (fma (fneg x), y, (fneg z))
   if (N0.getOpcode() == ISD::FNEG && isContractableFMUL(N0.getOperand(0)) &&
@@ -12996,11 +13058,13 @@ SDValue DAGCombiner::visitFDIV(SDNode *N) {
   }
 
   // (fdiv (fneg X), (fneg Y)) -> (fdiv X, Y)
-  if (isCheaperToUseNegatedFPOps(N0, N1))
-    return DAG.getNode(
-        ISD::FDIV, SDLoc(N), VT,
-        TLI.getNegatedExpression(N0, DAG, LegalOperations, ForCodeSize),
-        TLI.getNegatedExpression(N1, DAG, LegalOperations, ForCodeSize), Flags);
+  if (isCheaperToUseNegatedFPOps(N0, N1)) {
+    SDValue Neg0 =
+        TLI.getNegatedExpression(N0, DAG, LegalOperations, ForCodeSize);
+    SDValue Neg1 =
+        TLI.getNegatedExpression(N1, DAG, LegalOperations, ForCodeSize);
+    return DAG.getNode(ISD::FDIV, SDLoc(N), VT, Neg0, Neg1, Flags);
+  }
 
   return SDValue();
 }

@@ -22,7 +22,7 @@ include "mlir/Dialect/SPIRV/SPIRVAvailability.td"
 // SPIR-V dialect definitions
 //===----------------------------------------------------------------------===//
 
-def SPV_Dialect : Dialect {
+def SPIRV_Dialect : Dialect {
   let name = "spv";
 
   let summary = "The SPIR-V dialect in MLIR.";
@@ -46,6 +46,20 @@ def SPV_Dialect : Dialect {
   }];
 
   let cppNamespace = "spirv";
+  let hasConstantMaterializer = 1;
+  let hasOperationAttrVerify = 1;
+  let hasRegionArgAttrVerify = 1;
+  let hasRegionResultAttrVerify = 1;
+
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // Attribute
+    //===------------------------------------------------------------------===//
+
+    /// Returns the attribute name to use when specifying decorations on results
+    /// of operations.
+    static std::string getAttributeName(Decoration decoration);
+  }];
 }
 
 //===----------------------------------------------------------------------===//
@@ -2953,7 +2967,8 @@ def SPV_SamplerUseAttr:
 // SPIR-V attribute definitions
 //===----------------------------------------------------------------------===//
 
-def SPV_VerCapExtAttr : Attr<
+def SPV_VerCapExtAttr : DialectAttr<
+    SPIRV_Dialect,
     CPred<"$_self.isa<::mlir::spirv::VerCapExtAttr>()">,
     "version-capability-extension attribute"> {
   let storageType = "::mlir::spirv::VerCapExtAttr";
@@ -2993,10 +3008,14 @@ def SPV_Vector : VectorOfLengthAndType<[2, 3, 4],
                                        [SPV_Bool, SPV_Integer, SPV_Float]>;
 // Component type check is done in the type parser for the following SPIR-V
 // dialect-specific types so we use "Any" here.
-def SPV_AnyPtr : Type<SPV_IsPtrType, "any SPIR-V pointer type">;
-def SPV_AnyArray : Type<SPV_IsArrayType, "any SPIR-V array type">;
-def SPV_AnyRTArray : Type<SPV_IsRTArrayType, "any SPIR-V runtime array type">;
-def SPV_AnyStruct : Type<SPV_IsStructType, "any SPIR-V struct type">;
+def SPV_AnyPtr : DialectType<SPIRV_Dialect, SPV_IsPtrType,
+                             "any SPIR-V pointer type">;
+def SPV_AnyArray : DialectType<SPIRV_Dialect, SPV_IsArrayType,
+                               "any SPIR-V array type">;
+def SPV_AnyRTArray : DialectType<SPIRV_Dialect, SPV_IsRTArrayType,
+                                 "any SPIR-V runtime array type">;
+def SPV_AnyStruct : DialectType<SPIRV_Dialect, SPV_IsStructType,
+                                "any SPIR-V struct type">;
 
 def SPV_Numerical : AnyTypeOf<[SPV_Integer, SPV_Float]>;
 def SPV_Scalar : AnyTypeOf<[SPV_Numerical, SPV_Bool]>;
@@ -3264,7 +3283,7 @@ def SPV_OpcodeAttr :
 
 // Base class for all SPIR-V ops.
 class SPV_Op<string mnemonic, list<OpTrait> traits = []> :
-    Op<SPV_Dialect, mnemonic, !listconcat(traits, [
+    Op<SPIRV_Dialect, mnemonic, !listconcat(traits, [
          // TODO(antiagainst): We don't need all of the following traits for
          // every op; only the suitabble ones should be added automatically
          // after ODS supports dialect-specific contents.

@@ -1980,6 +1980,11 @@ static std::string GenerateTestExpression(ArrayRef<Record *> LangOpts) {
       Test += "(";
       Test += Code;
       Test += ")";
+      if (!E->getValueAsString("Name").empty()) {
+        PrintWarning(
+            E->getLoc(),
+            "non-empty 'Name' field ignored because 'CustomCode' was supplied");
+      }
     } else {
       Test += "LangOpts.";
       Test += E->getValueAsString("Name");
@@ -2324,7 +2329,7 @@ static void emitAttributes(RecordKeeper &Records, raw_ostream &OS,
     SemanticSpellingMap SemanticToSyntacticMap;
 
     std::string SpellingEnum;
-    if (!ElideSpelling)
+    if (Spellings.size() > 1)
       SpellingEnum = CreateSemanticSpellings(Spellings, SemanticToSyntacticMap);
     if (Header)
       OS << SpellingEnum;
@@ -3505,7 +3510,7 @@ static void GenerateAppertainsTo(const Record &Attr, raw_ostream &OS) {
   // of the declaration).
   OS << "virtual bool diagAppertainsToDecl(Sema &S, ";
   OS << "const ParsedAttr &Attr, const Decl *D) const {\n";
-  OS << "  if (!D || (";
+  OS << "  if (";
   for (auto I = Subjects.begin(), E = Subjects.end(); I != E; ++I) {
     // If the subject has custom code associated with it, use the generated
     // function for it. The function cannot be inlined into this check (yet)
@@ -3521,7 +3526,7 @@ static void GenerateAppertainsTo(const Record &Attr, raw_ostream &OS) {
     if (I + 1 != E)
       OS << " && ";
   }
-  OS << ")) {\n";
+  OS << ") {\n";
   OS << "    S.Diag(Attr.getLoc(), diag::";
   OS << (Warn ? "warn_attribute_wrong_decl_type_str" :
                "err_attribute_wrong_decl_type_str");

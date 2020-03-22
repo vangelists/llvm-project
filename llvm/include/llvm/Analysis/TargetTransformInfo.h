@@ -1069,6 +1069,7 @@ public:
 
   /// \returns The type to use in a loop expansion of a memcpy call.
   Type *getMemcpyLoopLoweringType(LLVMContext &Context, Value *Length,
+                                  unsigned SrcAddrSpace, unsigned DestAddrSpace,
                                   unsigned SrcAlign, unsigned DestAlign) const;
 
   /// \param[out] OpsOut The operand types to copy RemainingBytes of memory.
@@ -1080,6 +1081,8 @@ public:
   void getMemcpyLoopResidualLoweringType(SmallVectorImpl<Type *> &OpsOut,
                                          LLVMContext &Context,
                                          unsigned RemainingBytes,
+                                         unsigned SrcAddrSpace,
+                                         unsigned DestAddrSpace,
                                          unsigned SrcAlign,
                                          unsigned DestAlign) const;
 
@@ -1163,6 +1166,15 @@ public:
   /// \returns the size cost of rematerializing a GlobalValue address relative
   /// to a stack reload.
   unsigned getGISelRematGlobalCost() const;
+
+  /// \name Vector Predication Information
+  /// @{
+  /// Whether the target supports the %evl parameter of VP intrinsic efficiently in hardware.
+  /// (see LLVM Language Reference - "Vector Predication Intrinsics")
+  /// Use of %evl is discouraged when that is not the case.
+  bool hasActiveVectorLength() const;
+
+  /// @}
 
   /// @}
 
@@ -1382,11 +1394,15 @@ public:
   virtual Value *getOrCreateResultFromMemIntrinsic(IntrinsicInst *Inst,
                                                    Type *ExpectedType) = 0;
   virtual Type *getMemcpyLoopLoweringType(LLVMContext &Context, Value *Length,
+                                          unsigned SrcAddrSpace,
+                                          unsigned DestAddrSpace,
                                           unsigned SrcAlign,
                                           unsigned DestAlign) const = 0;
   virtual void getMemcpyLoopResidualLoweringType(
       SmallVectorImpl<Type *> &OpsOut, LLVMContext &Context,
-      unsigned RemainingBytes, unsigned SrcAlign, unsigned DestAlign) const = 0;
+      unsigned RemainingBytes,
+      unsigned SrcAddrSpace, unsigned DestAddrSpace,
+      unsigned SrcAlign, unsigned DestAlign) const = 0;
   virtual bool areInlineCompatible(const Function *Caller,
                                    const Function *Callee) const = 0;
   virtual bool
@@ -1413,6 +1429,7 @@ public:
                                      ReductionFlags) const = 0;
   virtual bool shouldExpandReduction(const IntrinsicInst *II) const = 0;
   virtual unsigned getGISelRematGlobalCost() const = 0;
+  virtual bool hasActiveVectorLength() const = 0;
   virtual int getInstructionLatency(const Instruction *I) = 0;
 };
 
@@ -1830,16 +1847,22 @@ public:
     return Impl.getOrCreateResultFromMemIntrinsic(Inst, ExpectedType);
   }
   Type *getMemcpyLoopLoweringType(LLVMContext &Context, Value *Length,
+                                  unsigned SrcAddrSpace, unsigned DestAddrSpace,
                                   unsigned SrcAlign,
                                   unsigned DestAlign) const override {
-    return Impl.getMemcpyLoopLoweringType(Context, Length, SrcAlign, DestAlign);
+    return Impl.getMemcpyLoopLoweringType(Context, Length,
+                                          SrcAddrSpace, DestAddrSpace,
+                                          SrcAlign, DestAlign);
   }
   void getMemcpyLoopResidualLoweringType(SmallVectorImpl<Type *> &OpsOut,
                                          LLVMContext &Context,
                                          unsigned RemainingBytes,
+                                         unsigned SrcAddrSpace,
+                                         unsigned DestAddrSpace,
                                          unsigned SrcAlign,
                                          unsigned DestAlign) const override {
     Impl.getMemcpyLoopResidualLoweringType(OpsOut, Context, RemainingBytes,
+                                           SrcAddrSpace, DestAddrSpace,
                                            SrcAlign, DestAlign);
   }
   bool areInlineCompatible(const Function *Caller,
@@ -1898,6 +1921,10 @@ public:
 
   unsigned getGISelRematGlobalCost() const override {
     return Impl.getGISelRematGlobalCost();
+  }
+
+  bool hasActiveVectorLength() const override {
+    return Impl.hasActiveVectorLength();
   }
 
   int getInstructionLatency(const Instruction *I) override {
