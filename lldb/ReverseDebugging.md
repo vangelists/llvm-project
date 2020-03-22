@@ -32,10 +32,6 @@ However, there is still lots of room for improvement and I will continue to look
 
     `thread tracing resume`
 
-* Get the ID of the current tracepoint (point in time within recorded history):
-
-    `thread current-tracepoint`
-
 </details>
 
 <details><summary>Stepping Back</summary>
@@ -102,7 +98,87 @@ However, there is still lots of room for improvement and I will continue to look
 
 </details>
 
-<details><summary>Bookmarks</summary>
+<details><summary>Navigating History</summary>
+
+* Get the ID of the current tracepoint (point in time within recorded history):
+
+    `thread tracing current-tracepoint`
+
+* Jump to a tracepoint:
+
+    `thread tracing jump [-t <tracepoint-id>]`
+
+</details>
+
+<details><summary>Examining Modifications</summary>
+
+* List modifications to a register, variable or heap address that took place at a previous or later point in time (relative to the current tracepoint), or both:
+
+    `thread tracing modification list [-c <count>] [-w <traced-write-timing>] <expr>`
+
+  * List both past and future modifications of variable `int global`:
+
+    ```
+    (lldb) mod list global
+
+    Tracepoints where "global" was modified:
+
+      321 (0x1000018e0): memory_access`main + 528 at memory_access.cpp:61:9
+      ├─ Old value: 0
+      └─ New value: 0
+
+      322 (0x1000018e5): memory_access`main + 533 at memory_access.cpp:63:12
+      ├─ Old value: 0
+      └─ New value: 25
+
+    * 324 (0x1000018f5): memory_access`main + 549 at memory_access.cpp:64:12
+      ├─ Old value: 25
+      └─ New value: 25
+
+      325 (0x1000018f8): memory_access`main + 552 at memory_access.cpp:64:12
+      ├─ Old value: 25
+      └─ New value: 126
+    ```
+
+  * List the 3 last modifications of register `rax`:
+
+    ```
+    (lldb) mod list $rax -c 3 -w past
+
+    Past tracepoints where $rax was modified:
+
+      367 (0x1000016cd): memory_access`foo(int) + 29 at memory_access.cpp:14:5
+      ├─ Old value: 0xffffffffffffffff
+      └─ New value: 0x19
+
+      370 (0x1000019a4): memory_access`main + 724 at memory_access.cpp:80:15
+      ├─ Old value: 0x19
+      └─ New value: 0x19
+
+      371 (0x1000019aa): memory_access`main + 730 at memory_access.cpp:80:15
+      ├─ Old value: 0x19
+      └─ New value: 0x7fff93f84760
+    ```
+
+  * List 2 modifications of (heap-allocated) `double p.z` after the current tracepoint:
+
+    ```
+    (lldb) mod list &p.z -c 2 -w future
+
+    Future tracepoints where 0x1001c9008 was modified:
+
+      302 (0x10000187c): memory_access`main + 428 at memory_access.cpp:59:9
+      ├─ Old contents: 00 00 00 00 00 00 00 00
+      └─ New contents: 00 00 00 00 00 00 23 40
+
+      321 (0x1000018e0): memory_access`main + 528 at memory_access.cpp:61:9
+      ├─ Old contents: 00 00 00 00 00 00 23 40
+      └─ New contents: 00 00 00 00 00 00 23 40
+    ```
+
+</details>
+
+<details><summary>Managing Bookmarks</summary>
 
 * Create a bookmark at the current or provided tracepoint, if any, with an optional name:
 
@@ -139,6 +215,8 @@ However, there is still lots of room for improvement and I will continue to look
 | `thread tracing resume`             | `record-resume` <br> `rec-resume`                                                    |
 | `thread tracing stop`               | `record-stop` <br> `rec-stop`                                                        |
 | `thread tracing current-tracepoint` | `current-tracepoint` <br> `ct`                                                       |
+| `thread tracing jump`               | `jt`                                                                      |
+| `thread tracing modification`       | `modification` <br> `mod`                                                                 |
 | `thread tracing bookmark`           | `bookmark` <br> `bm`                                                                 |
 | `thread step-back`                  | `step-back` <br> `sb` <br> `previous` <br> `prev` <br> `ps`                          |
 | `thread step-back-inst`             | `step-back-inst` <br> `sbi` <br> `previous-instruction` <br> `prev-inst` <br> `pi`   |
@@ -177,11 +255,15 @@ A snapshot of the thread's state and environment (registers, variables, heap) is
 
     The values of all registers and variables for all active stack frames are currently being backed up, regardless of whether the instruction about to be executed would modify any of those, with the exception of exception state registers, which are always ignored.
 
+    In addition, the modified registers and variables are marked, enabling the user to list modifications with the `thread tracing modification list` command.
+
 - **Heap Modifications**
 
     If the instruction about to be executed is recognized as one that may store, based on the information provided by the Disassembler plugin, then the destination operand is translated into a (virtual) memory address and the instruction mnemonic is used to extract the number of bytes about to be stored.
 
     Given that this address corresponds to the heap (that is, does not belong to the stack and does not correspond to any known symbol or code), the contents of that memory location are saved right before and after the aforementioned instruction is executed, in order to backup both the old and the new contents of that location and enable the debugger to undo or redo the write.
+
+    Additionally, just like with registers and variables, modified heap regions are marked, thus allowing listing of modifications via the `thread tracing modification list` command.
 
 - **Thread State**
 
@@ -258,7 +340,7 @@ Results of frequent and expensive computations are cached, aiming to improve tra
 For now, this translates to caching whether an address corrseponds to the heap or the stack and whether a symbol belongs to a library installed under `/usr/lib/`.
 
 
-# Code Location
+# Code Details
 
 Currently, most of the implementation is provided by the `ThreadPlanInstructionTracer` class in [ThreadPlanTracer.h](https://github.com/vangelists/llvm-project/blob/public/reverse-debugging/lldb/include/lldb/Target/ThreadPlanTracer.h) and [ThreadPlanTracer.cpp](https://github.com/vangelists/llvm-project/blob/public/reverse-debugging/lldb/source/Target/ThreadPlanTracer.cpp).
 
@@ -272,14 +354,14 @@ A number of other files have also been modified, albeit to a lesser extent. You 
 In no particular order:
 
 - [ ] Track modifications made by system calls and other known functions, e.g. `memcpy()`.
-- [ ] Add ability to step back or replay up to the point where a register or variable was last modified.
-- [ ] Handle deallocated and reclaimed heap regions.
+- [ ] Add ability to jump directly to the previous or next point where a value was modified.
+- [ ] Handle reallocated heap regions.
 - [ ] Add support for watchpoints.
-- [ ] Create tests.
+- [ ] Create automated tests.
 - [ ] Minimize memory footprint, i.e. back up only what is necessary.
 - [ ] Expand functionality to multi-threaded programs.
 - [ ] Export reverse debugging API at the SB level.
-- [ ] Consider moving the core functionality into a plugin that would use the private or public API.
+- [ ] Consider moving the core functionality into a plugin that would work via the API.
 - [ ] Use the public API to provide a GUI, e.g. for Visual Studio Code.
 - [ ] Add support for additional platforms, e.g. Darwin on AArch64.
 - [ ] Add support for more languages, e.g. Swift or Rust.

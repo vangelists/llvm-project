@@ -414,7 +414,7 @@ RegisterContext::GetRecordedRegisterValue(std::size_t register_id) {
     m_recorded_register_values =
         m_thread.GetRecordedRegisterValuesForStackFrame(m_concrete_frame_idx);
   }
-  return m_recorded_register_values[register_id];
+  return m_recorded_register_values[register_id].value;
 }
 
 TargetSP RegisterContext::CalculateTarget() {

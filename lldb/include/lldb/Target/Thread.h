@@ -74,33 +74,9 @@ public:
   /// individual points in time within the recorded thread execution history.
   using TracepointID = std::size_t;
 
-  /// The maximum tracepoint ID.
+  /// Denotes an invalid tracepoint ID.
   static constexpr auto InvalidTracepointID =
       std::numeric_limits<TracepointID>::max();
-
-  /// \enum TracingToken
-  ///
-  /// Used as naïve access control before resuming tracing, aiming to determine
-  /// whether the originator of the resumption request has the privilege to
-  /// affect tracing.
-  ///
-  /// For example, an expression evaluation cannot resume tracing if the user
-  /// or the tracer has suspended tracing.
-  ///
-  /// Details regarding the rules surrounding the various tokens can be found
-  /// in `ThreadPlanTracer::ShouldAcceptToken()`.
-  ///
-  /// \note
-  ///     The use case for this type arose from the need to prevent expression
-  ///     evaluation from arbitrarily resuming tracing, even after the user or
-  ///     the tracer has suspended tracing.
-  ///
-  enum class TracingToken {
-   eExpressionEvaluation, ///< Used when evaluating a user expression.
-   eInternal,             ///< Only for use by the tracer.
-   eInvalid,              ///< Only for use by the tracer.
-   eUserCommand           ///< Used by "recording {suspend, resume}" commands.
-  };
 
   /// \class Bookmark
   ///
@@ -114,6 +90,9 @@ public:
   public:
     /// Constructs this `TracingBookmark` object.
     ///
+    /// \param[in] thread
+    ///     The thread whose tracer manages this bookmark.
+    ///
     /// \param[in] location
     ///     The ID of the tracepoint marked by this bookmark.
     ///
@@ -123,24 +102,23 @@ public:
     /// \param[in] pc
     ///     The value of PC at the tracepoint marked by this bookmark.
     ///
-    TracingBookmark(TracepointID location, std::string_view name,
+    TracingBookmark(Thread &thread, TracepointID location, llvm::StringRef name,
                     lldb::addr_t pc);
 
     /// Destructs this `TracingBookmark` object.
     ///
     ~TracingBookmark();
 
-    /// Enable move construction and assignment.
+    /// Enable move construction.
     ///
     TracingBookmark(TracingBookmark &&);
-    TracingBookmark &operator=(TracingBookmark &&);
 
     /// Returns the name of this bookmark.
     ///
     /// \return
     ///     The name of this bookmark.
     ///
-    std::string_view GetName() const;
+    llvm::StringRef GetName() const;
 
     /// Returns the name of this bookmark formatted for printing.
     ///
@@ -168,7 +146,10 @@ public:
     /// \param[in] stream
     ///     Stream into which to dump the description of this bookmark.
     ///
-    void GetDescription(Stream &stream) const;
+    /// \param[in] level
+    ///     The description level that indicates the detail level to provide.
+    ///
+    void GetDescription(Stream &stream, lldb::DescriptionLevel level) const;
 
   protected:
     friend class ThreadPlanInstructionTracer;
@@ -178,7 +159,7 @@ public:
     /// \param[in] name
     ///     The new name of this bookmark.
     ///
-    void SetName(std::string_view name);
+    void SetName(llvm::StringRef name);
 
     /// Changes the location marked by this bookmark.
     ///
@@ -191,9 +172,10 @@ public:
     void SetLocation(TracepointID location, lldb::addr_t pc);
 
   private:
-    TracepointID m_location;
-    std::string m_name;
-    lldb::addr_t m_pc;
+    Thread &m_thread; ///< The thread whose tracer manages this bookmark.
+    TracepointID m_location; ///< The ID of the bookmarked tracepoint.
+    std::string m_name; ///< The name of this bookmark.
+    Address m_pc; ///< The value of PC at the bookmarked tracepoint.
 
     DISALLOW_COPY_AND_ASSIGN(TracingBookmark);
   };
@@ -794,7 +776,7 @@ public:
   ///
   /// \return
   ///     The register values recorded by the tracer for the given frame.
-  const RegisterContext::RegisterValues &
+  const RegisterContext::SavedRegisterValues &
   GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx);
 
   /// Returns the ID of the currently active tracepoint.
@@ -803,14 +785,83 @@ public:
   ///     The ID of the current tracepoint or `InvalidTracepointID` on failure.
   TracepointID GetCurrentTracepointID();
 
-  /// Returns the value of PC at the given location in recorded history.
+  /// Jumps to the given tracepoint.
   ///
-  /// \param[in] location
-  ///     The location in recorded history whose PC value to return.
+  /// \param[in] destination
+  ///     The destination tracepoint.
   ///
   /// \return
-  ///     The value of PC at the given location in recorded history.
-  lldb::addr_t GetPCAtTracepoint(Thread::TracepointID location);
+  ///     An error value, in case the jump fails.
+  Status JumpToTracepoint(TracepointID destination);
+
+  /// Lists up to the requested number of source locations where the value of
+  /// the given register was modified in recorded history.
+  ///
+  /// \param[in] stream
+  ///     The stream to list modifications.
+  ///
+  /// \param[in] register_name
+  ///     The name of the register whose modifications to list.
+  ///
+  /// \param[in] num_locations
+  ///     The maximum number of modifications to list.
+  ///
+  /// \param[in] write_timing
+  ///     Whether to list modifications that took place at a previous or later
+  ///     point in time or both.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  Status ListRegisterWriteLocations(Stream &stream,
+                                    llvm::StringRef register_name,
+                                    std::size_t num_locations,
+                                    lldb::TracedWriteTiming write_timing);
+
+  /// Lists up to the requested number of source locations where the value of
+  /// the given variable was modified in recorded history.
+  ///
+  /// \param[in] stream
+  ///     The stream to list modifications.
+  ///
+  /// \param[in] variable_name
+  ///     The name of the variable whose modifications to list.
+  ///
+  /// \param[in] num_locations
+  ///     The maximum number of modifications to list.
+  ///
+  /// \param[in] write_timing
+  ///     Whether to list modifications that took place at a previous or later
+  ///     point in time or both.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  Status ListVariableWriteLocations(Stream &stream,
+                                    llvm::StringRef variable_name,
+                                    std::size_t num_locations,
+                                    lldb::TracedWriteTiming write_timing);
+
+  /// Lists up to the requested number of source locations where the contents of
+  /// the given heap address were modified in recorded history.
+  ///
+  /// \param[in] stream
+  ///     The stream to list modifications.
+  ///
+  /// \param[in] heap_address
+  ///     The heap address whose modifications to list.
+  ///
+  /// \param[in] num_locations
+  ///     The maximum number of modifications to list.
+  ///
+  /// \param[in] write_timing
+  ///     Whether to list modifications that took place at a previous or later
+  ///     point in time or both.
+  ///
+  /// \return
+  ///     An error that describes anything that went wrong.
+  Status ListHeapAddressWriteLocations(Stream &stream,
+                                       lldb::addr_t heap_address,
+                                       std::size_t num_locations,
+                                       lldb::TracedWriteTiming write_timing);
 
   /// Creates a bookmark at the requested location in recorded history.
   ///
@@ -823,7 +874,7 @@ public:
   /// \return
   ///     An error value, in case bookmark creation fails.
   Status CreateTracingBookmark(TracepointID location,
-                               std::string_view name = {});
+                               llvm::StringRef name = {});
 
   /// Deletes the bookmark marking the requested location.
   ///
@@ -869,7 +920,7 @@ public:
   ///
   /// \return
   ///     An error value, in case bookmark renaming fails.
-  Status RenameTracingBookmark(TracepointID location, std::string_view name);
+  Status RenameTracingBookmark(TracepointID location, llvm::StringRef name);
 
   /// Moves the bookmark from the current location to a new one.
   ///
@@ -1401,8 +1452,8 @@ public:
 
   void EnableTracing();
   void DisableTracing();
-  void SuspendTracing(TracingToken token);
-  void ResumeTracing(TracingToken token);
+  void SuspendTracing(lldb::TracingToken token);
+  void ResumeTracing(lldb::TracingToken token);
 
   bool TracingEnabled();
   bool TracingDisabled();

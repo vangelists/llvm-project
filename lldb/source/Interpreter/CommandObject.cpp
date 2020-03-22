@@ -1107,6 +1107,7 @@ CommandObject::ArgumentTableEntry CommandObject::g_arguments_data[] = {
     { eArgTypeThreadID, "thread-id", CommandCompletions::eNoCompletion, { nullptr, false }, "Thread ID number." },
     { eArgTypeThreadIndex, "thread-index", CommandCompletions::eNoCompletion, { nullptr, false }, "Index into the process' list of threads." },
     { eArgTypeThreadName, "thread-name", CommandCompletions::eNoCompletion, { nullptr, false }, "The thread's name." },
+    { eArgTypeTracedWriteTiming, "traced-write-timing", CommandCompletions::eNoCompletion, { nullptr, false }, "Whether to list modifications that took place at a previous or later point in time or both." },
     { eArgTypeTracepointID, "tracepoint-id", CommandCompletions::eNoCompletion, { nullptr, false }, "The ID of a thread tracepoint." },
     { eArgTypeTracepointName, "tracepoint-name", CommandCompletions::eNoCompletion, { nullptr, false }, "The name of a thread tracepoint." },
     { eArgTypeTypeName, "type-name", CommandCompletions::eNoCompletion, { nullptr, false }, "A type name." },

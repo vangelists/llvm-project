@@ -2360,7 +2360,7 @@ ExpressionResults Target::EvaluateExpression(
     if (m_process_sp) {
       ThreadList::ThreadIterable threads = m_process_sp->Threads();
       for (ThreadSP thread : threads) {
-        thread->SuspendTracing(Thread::TracingToken::eExpressionEvaluation);
+        thread->SuspendTracing(TracingToken::ExpressionEvaluation);
       }
     }
 
@@ -2374,7 +2374,7 @@ ExpressionResults Target::EvaluateExpression(
     if (m_process_sp) {
       ThreadList::ThreadIterable threads = m_process_sp->Threads();
       for (ThreadSP thread : threads) {
-        thread->ResumeTracing(Thread::TracingToken::eExpressionEvaluation);
+        thread->ResumeTracing(TracingToken::ExpressionEvaluation);
       }
     }
   }

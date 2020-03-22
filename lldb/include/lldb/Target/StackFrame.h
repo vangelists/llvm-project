@@ -85,7 +85,7 @@ public:
     uint32_t frame_index;
     uint32_t concrete_frame_index;
     lldb::RegisterContextSP reg_context_sp;
-    StackID stack_id;
+    StackID id;
     Address frame_code_addr;
     SymbolContext sc;
     Flags flags;

@@ -1818,8 +1818,8 @@ protected:
 class CommandObjectThreadRecordReplay : public CommandObjectParsed {
 public:
   CommandObjectThreadRecordReplay(CommandInterpreter &interpreter,
-                                  std::string_view name, std::string_view help,
-                                  std::string_view syntax)
+                                  llvm::StringRef name, llvm::StringRef help,
+                                  llvm::StringRef syntax)
       : CommandObjectParsed(interpreter, name.data(), help.data(),
                             syntax.data(), m_command_flags), m_name(name) {}
 
@@ -1845,7 +1845,7 @@ protected:
     return true;
   }
 
-  void PrintStopLocationInfo(std::string_view stop_reason,
+  void PrintStopLocationInfo(llvm::StringRef stop_reason,
                              CommandReturnObject &result) {
     Thread &thread = *m_exe_ctx.GetThreadPtr();
 
@@ -1874,6 +1874,10 @@ protected:
   Thread::TracepointID ExtractTracepointID(
       llvm::Optional<Thread::TracepointID> tracepoint_id_opt) {
     return ExtractOption(tracepoint_id_opt, Thread::InvalidTracepointID);
+  }
+
+  std::size_t ExtractLocationCount(llvm::Optional<std::size_t> loc_count_opt) {
+    return ExtractOption(loc_count_opt, static_cast<std::size_t>(5));
   }
 
   std::size_t ExtractStepCount(llvm::Optional<std::size_t> step_count_opt) {
@@ -1968,7 +1972,7 @@ protected:
       return false;
     }
     Thread &thread = m_exe_ctx.GetThreadRef();
-    thread.SuspendTracing(Thread::TracingToken::eUserCommand);
+    thread.SuspendTracing(TracingToken::UserCommand);
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
     return true;
   }
@@ -1992,23 +1996,23 @@ protected:
       return false;
     }
     Thread &thread = m_exe_ctx.GetThreadRef();
-    thread.ResumeTracing(Thread::TracingToken::eUserCommand);
+    thread.ResumeTracing(TracingToken::UserCommand);
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
     return true;
   }
 };
 
-#pragma mark CommandObjectThreadTracingCurrentTracepoint
+#pragma mark CommandObjectThreadTracingTracepointCurrent
 
-class CommandObjectThreadTracingCurrentTracepoint
+class CommandObjectThreadTracingTracepointCurrent
     : public CommandObjectThreadRecordReplay {
 public:
-  CommandObjectThreadTracingCurrentTracepoint(CommandInterpreter &interpreter)
+  CommandObjectThreadTracingTracepointCurrent(CommandInterpreter &interpreter)
       : CommandObjectThreadRecordReplay(interpreter, "current-tracepoint",
             "Get the ID of the current tracepoint.",
             "thread tracing current-tracepoint") {}
 
-  ~CommandObjectThreadTracingCurrentTracepoint() override = default;
+  ~CommandObjectThreadTracingTracepointCurrent() override = default;
 
 protected:
   bool DoExecute(Args &arguments, CommandReturnObject &result) override {
@@ -2031,6 +2035,302 @@ protected:
     }
     return true;
   }
+};
+
+#pragma mark CommandObjectThreadTracingJump
+#define LLDB_OPTIONS_thread_tracing_jump
+#include "CommandOptions.inc"
+
+class CommandObjectThreadTracingJump : public CommandObjectThreadRecordReplay {
+public:
+  class CommandOptions : public Options {
+  public:
+    CommandOptions() : Options() {
+      OptionParsingStarting(nullptr);
+    }
+
+    ~CommandOptions() override = default;
+
+    void OptionParsingStarting(ExecutionContext *execution_context) override {
+      m_tracepoint_id.reset();
+    }
+
+    Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
+                          ExecutionContext *execution_context) override {
+      const int short_option = m_getopt_table[option_idx].val;
+      switch (short_option) {
+      case 't':
+        m_tracepoint_id.emplace();
+        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
+          m_tracepoint_id.reset();
+          return Status("Invalid tracepoint ID: '%s'.",
+                        option_arg.str().c_str());
+        }
+        return Status();
+      default:
+        return Status("Invalid short option character '%c'.", short_option);
+      }
+    }
+
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_thread_tracing_jump_options);
+    }
+
+    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
+  };
+
+  CommandObjectThreadTracingJump(CommandInterpreter &interpreter)
+      : CommandObjectThreadRecordReplay(interpreter, "jump", "Jump to a "
+                                        "tracepoint.", "tracing jump"),
+        m_options() {}
+
+  ~CommandObjectThreadTracingJump() override = default;
+
+  Options *GetOptions() override {
+    return &m_options;
+  }
+
+protected:
+  bool DoExecute(Args &arguments, CommandReturnObject &result) override {
+    if (!CheckArguments(arguments, result) || !TracingEnabled(result)) {
+      return false;
+    }
+
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
+    const Thread::TracepointID destination =
+        ExtractTracepointID(m_options.m_tracepoint_id);
+
+    if (Status error = thread.JumpToTracepoint(destination); error.Fail()) {
+      result.AppendErrorWithFormatv("Jump to tracepoint failed: {0}",
+                                    error.AsCString());
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
+    StreamString stop_reason;
+    stop_reason.Format("jump to tracepoint {0}", destination);
+    PrintStopLocationInfo(stop_reason.GetString(), result);
+
+    result.SetStatus(eReturnStatusSuccessFinishNoResult);
+    return true;
+  }
+
+  CommandOptions m_options;
+};
+
+#pragma mark CommandObjectThreadTracingModificationList
+
+static constexpr OptionEnumValueElement g_traced_write_timing[] = {
+    {
+      static_cast<int64_t>(TracedWriteTiming::Past),
+      "past",
+      "List only modifications that took place at a previous point in time."
+    },
+    {
+      static_cast<int64_t>(TracedWriteTiming::Future),
+      "future",
+      "List only modifications that took place at a later point in time."
+    },
+    {
+      static_cast<int64_t>(TracedWriteTiming::Any),
+      "any",
+      "List modifications that took place at any point in time."
+    }
+};
+
+#define LLDB_OPTIONS_thread_tracing_modification_list
+#include "CommandOptions.inc"
+
+class CommandObjectThreadTracingModificationList
+    : public CommandObjectThreadRecordReplay {
+public:
+class CommandOptions : public Options {
+  public:
+    CommandOptions() : Options() {
+      OptionParsingStarting(nullptr);
+    }
+
+    ~CommandOptions() override = default;
+
+    void OptionParsingStarting(ExecutionContext *execution_context) override {
+      m_location_count.reset();
+      write_timing = TracedWriteTiming::Any;
+    }
+
+    Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
+                          ExecutionContext *execution_context) override {
+      const int short_option = m_getopt_table[option_idx].val;
+      switch (short_option) {
+      case 'c':
+        m_location_count.emplace();
+        if (option_arg.getAsInteger(0, *m_location_count)) {
+          m_location_count.reset();
+          return Status("Invalid location count: '%s'.",
+                        option_arg.str().c_str());
+        }
+        return Status();
+      case 'w': {
+        Status error;
+        const int64_t enum_case_idx = OptionArgParser::ToOptionEnum(
+            option_arg, GetDefinitions()[option_idx].enum_values, 0, error);
+        if (error.Fail()) {
+          write_timing = TracedWriteTiming::Any;
+          return Status("Unrecognized value for traced write timing: '%s'",
+                        option_arg.str().c_str());
+        }
+        write_timing = static_cast<TracedWriteTiming>(enum_case_idx);
+        return Status();
+      }
+      default:
+        return Status("Invalid short option character '%c'.", short_option);
+      }
+    }
+
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_thread_tracing_modification_list_options);
+    }
+
+    llvm::Optional<std::size_t> m_location_count;
+    TracedWriteTiming write_timing;
+  };
+
+  Options *GetOptions() override {
+    return &m_options;
+  }
+
+  CommandObjectThreadTracingModificationList(CommandInterpreter &interpreter)
+      : CommandObjectThreadRecordReplay(interpreter, "list", "List source "
+                                        "locations where a variable, register "
+                                        "or heap address was modified.",
+                                        "modification list") {
+    CommandArgumentEntry arg;
+    CommandArgumentData mod_list_arg;
+
+    // Define the first (and only) variant of this arg.
+    mod_list_arg.arg_type = eArgTypeExpression;
+    mod_list_arg.arg_repetition = eArgRepeatPlain;
+
+    // There is only one variant this argument could be; put it into the
+    // argument entry.
+    arg.push_back(mod_list_arg);
+
+    // Push the data for the first argument into the m_arguments vector.
+    m_arguments.push_back(arg);
+  }
+
+  ~CommandObjectThreadTracingModificationList() override = default;
+
+protected:
+  bool DoExecute(Args &arguments, CommandReturnObject &result) override {
+    if (!TracingEnabled(result)) {
+      return false;
+    }
+
+    if (arguments.GetArgumentCount() != 1) {
+      result.SetError("Command \"modification list\" accepts exactly one "
+                      "argument (register, variable name or heap address).");
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
+    llvm::StringRef argument = arguments.GetArgumentAtIndex(0);
+    const std::size_t location_count =
+        ExtractLocationCount(m_options.m_location_count);
+
+    if (argument.consume_front("$")) {
+      return HandleRegister(argument, location_count, result);
+    } else if (llvm::isAlpha(argument.front())) {
+      return HandleVariable(argument, location_count, result);
+    } else {
+      return HandleHeapAddress(argument, location_count, result);
+    }
+  }
+
+  CommandOptions m_options;
+
+private:
+  bool HandleRegister(llvm::StringRef register_name, std::size_t location_count,
+                      CommandReturnObject &result) {
+    Thread &thread = m_exe_ctx.GetThreadRef();
+    Stream &stream = result.GetOutputStream();
+
+    Status error = thread.ListRegisterWriteLocations(stream, register_name,
+                                                     location_count,
+                                                     m_options.write_timing);
+    if (error.Fail()) {
+      result.AppendErrorWithFormatv("Listing write locations for register "
+                                    "failed: {0}", error.AsCString());
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
+    return true;
+  }
+
+  bool HandleVariable(llvm::StringRef variable_name, std::size_t location_count,
+                      CommandReturnObject &result) {
+    Thread &thread = m_exe_ctx.GetThreadRef();
+    Stream &stream = result.GetOutputStream();
+
+    Status error = thread.ListVariableWriteLocations(stream, variable_name,
+                                                     location_count,
+                                                     m_options.write_timing);
+    if (error.Fail()) {
+      result.AppendErrorWithFormatv("Listing write locations for variable "
+                                    "failed: {0}", error.AsCString());
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
+    return true;
+  }
+
+  bool
+  HandleHeapAddress(llvm::StringRef address_arg, std::size_t location_count,
+                    CommandReturnObject &result) {
+    Thread &thread = m_exe_ctx.GetThreadRef();
+    Stream &stream = result.GetOutputStream();
+    Status error;
+
+    const addr_t heap_address = OptionArgParser::ToAddress(&m_exe_ctx,
+                                                           address_arg,
+                                                           LLDB_INVALID_ADDRESS,
+                                                           &error);
+    if (heap_address == LLDB_INVALID_ADDRESS) {
+      result.AppendErrorWithFormatv("Invalid address expression: {0}",
+                                    error.AsCString());
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
+    error = thread.ListHeapAddressWriteLocations(stream, heap_address,
+                                                 location_count,
+                                                 m_options.write_timing);
+    if (error.Fail()) {
+      result.AppendErrorWithFormatv("Listing write locations for heap address "
+                                    "failed: {0}", error.AsCString());
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
+    return true;
+  }
+};
+
+#pragma mark CommandObjectMultiwordModification
+
+class CommandObjectMultiwordModification : public CommandObjectMultiword {
+public:
+  CommandObjectMultiwordModification(CommandInterpreter &interpreter)
+      : CommandObjectMultiword(interpreter, "modification", "Commands for "
+                               "examining writes to variables, registers and "
+                               "heap addresses for current thread.",
+                               "thread tracing modification <subcommand>") {
+    LoadSubCommand("list", CommandObjectSP(
+        new CommandObjectThreadTracingModificationList(interpreter)));
+  }
+
+  ~CommandObjectMultiwordModification() = default;
 };
 
 #pragma mark CommandObjectThreadTracingBookmarkCreate
@@ -2063,9 +2363,8 @@ public:
           m_tracepoint_id.reset();
           return Status("Invalid tracepoint ID: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       case 'n':
         m_tracepoint_name.assign(option_arg);
         return Status();
@@ -2100,13 +2399,13 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
+    const llvm::StringRef name = m_options.m_tracepoint_name;
     const Thread::TracepointID location = m_options.m_tracepoint_id
                                               ? *m_options.m_tracepoint_id
                                               : thread.GetCurrentTracepointID();
-    std::string_view name = m_options.m_tracepoint_name;
 
-    Status error = thread.CreateTracingBookmark(location, name);
-    if (error.Fail()) {
+    if (Status error = thread.CreateTracingBookmark(location, name);
+        error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark creation failed: {0}",
                                     error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -2118,7 +2417,7 @@ protected:
     if (bookmark) {
       Stream &stream = result.GetOutputStream();
       stream.PutCString("Created ");
-      bookmark->GetDescription(stream);
+      bookmark->GetDescription(stream, eDescriptionLevelInitial);
       result.SetStatus(eReturnStatusSuccessFinishNoResult);
       return true;
     } else {
@@ -2158,9 +2457,8 @@ public:
           m_tracepoint_id.reset();
           return Status("Invalid tracepoint ID: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2190,18 +2488,18 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const Thread::TracepointID location =
         ExtractTracepointID(m_options.m_tracepoint_id);
 
-    Status error = m_exe_ctx.GetThreadPtr()->DeleteTracingBookmark(location);
-    if (error.Fail()) {
+    if (Status error = thread.DeleteTracingBookmark(location); error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark deletion failed: {0}",
                                     error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
     }
 
-    result.GetOutputStream().Format("Deleted bookmark at tracepoint #{0}\n",
+    result.GetOutputStream().Format("Deleted bookmark at tracepoint {0}\n",
                                     location);
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
     return true;
@@ -2239,9 +2537,8 @@ public:
           m_tracepoint_id.reset();
           return Status("Invalid tracepoint ID: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2278,7 +2575,7 @@ protected:
       llvm::Expected<const Thread::TracingBookmark &> bookmark =
           thread.GetTracingBookmark(*m_options.m_tracepoint_id);
       if (bookmark) {
-        bookmark->GetDescription(stream);
+        bookmark->GetDescription(stream, eDescriptionLevelFull);
         result.SetStatus(eReturnStatusSuccessFinishNoResult);
         return true;
       } else {
@@ -2296,7 +2593,7 @@ protected:
           } else {
             stream.PutCString("  ");
           }
-          bookmark.GetDescription(stream);
+          bookmark.GetDescription(stream, eDescriptionLevelFull);
         }
       }
       result.SetStatus(eReturnStatusSuccessFinishNoResult);
@@ -2336,9 +2633,8 @@ public:
           m_tracepoint_id.reset();
           return Status("Invalid tracepoint ID: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2425,9 +2721,8 @@ public:
           m_tracepoint_id.reset();
           return Status("Invalid tracepoint ID: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       case 'n':
         m_tracepoint_name.assign(option_arg);
         return Status();
@@ -2474,9 +2769,10 @@ protected:
       return false;
     }
 
-    std::string_view name = m_options.m_tracepoint_name;
-    Status error = thread.RenameTracingBookmark(location, name);
-    if (error.Fail()) {
+    const llvm::StringRef name = m_options.m_tracepoint_name;
+
+    if (Status error = thread.RenameTracingBookmark(location, name);
+        error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark rename failed: {0}",
                                     error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -2484,8 +2780,8 @@ protected:
     }
 
     Stream &stream = result.GetOutputStream();
-    stream.PutCString("Rename ");
-    bookmark->GetDescription(stream);
+    stream.PutCString("Renamed ");
+    bookmark->GetDescription(stream, eDescriptionLevelBrief);
 
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
     return true;
@@ -2524,18 +2820,16 @@ public:
           m_source_tracepoint_id.reset();
           return Status("Invalid source tracepoint ID: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       case 'd':
         m_destination_tracepoint_id.emplace();
         if (option_arg.getAsInteger(0, *m_destination_tracepoint_id)) {
           m_destination_tracepoint_id.reset();
           return Status("Invalid destination tracepoint ID: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2580,8 +2874,8 @@ protected:
       return false;
     }
 
-    Status error = thread.MoveTracingBookmark(source, destination);
-    if (error.Fail()) {
+    if (Status error = thread.MoveTracingBookmark(source, destination);
+        error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark move failed: {0}",
                                     error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -2590,9 +2884,8 @@ protected:
 
     if (bookmark = thread.GetTracingBookmark(destination); bookmark) {
       Stream &stream = result.GetOutputStream();
-      stream.Format("Moved bookmark to tracepoint #{0} ({1:x}): {2}",
-                    bookmark->GetLocation(), bookmark->GetPC(),
-                    bookmark->GetFormattedName());
+      stream.Format("Moved bookmark to tracepoint {0}: {1}",
+                    bookmark->GetLocation(), bookmark->GetFormattedName());
       stream.EOL();
       result.SetStatus(eReturnStatusSuccessFinishNoResult);
       return true;
@@ -2651,7 +2944,11 @@ public:
     LoadSubCommand("resume", CommandObjectSP(
         new CommandObjectThreadTracingResume(interpreter)));
     LoadSubCommand("current-tracepoint", CommandObjectSP(
-        new CommandObjectThreadTracingCurrentTracepoint(interpreter)));
+        new CommandObjectThreadTracingTracepointCurrent(interpreter)));
+    LoadSubCommand("jump", CommandObjectSP(
+        new CommandObjectThreadTracingJump(interpreter)));
+    LoadSubCommand("modification", CommandObjectSP(
+        new CommandObjectMultiwordModification(interpreter)));
     LoadSubCommand("bookmark", CommandObjectSP(
         new CommandObjectMultiwordBookmark(interpreter)));
   }
@@ -2688,9 +2985,8 @@ public:
           m_step_count.reset();
           return Status("Invalid statement count: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2720,10 +3016,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBack(step_count);
-    if (error.Fail()) {
+    if (Status error = thread.StepBack(step_count); error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -2770,9 +3066,8 @@ public:
           m_step_count.reset();
           return Status("Invalid instruction count: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2802,10 +3097,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBackInstruction(step_count);
-    if (error.Fail()) {
+    if (Status error = thread.StepBackInstruction(step_count); error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -2846,15 +3141,15 @@ public:
                           ExecutionContext *execution_context) override {
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
-      case 'a':
+      case 'a': {
+        Status error;
         m_target_address.emplace();
-        if (option_arg.getAsInteger(0, *m_target_address)) {
-          m_target_address.reset();
-          return Status("Invalid target address: '%s'.",
-                        option_arg.str().c_str());
-        } else {
-          return Status();
-        }
+        m_target_address = OptionArgParser::ToAddress(execution_context,
+                                                      option_arg,
+                                                      LLDB_INVALID_ADDRESS,
+                                                      &error);
+        return error;
+      }
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2885,10 +3180,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const addr_t target_pc = ExtractAddress(m_options.m_target_address);
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBackUntilAddress(target_pc);
-    if (error.Fail()) {
+    if (Status error = thread.StepBackUntilAddress(target_pc); error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -2933,9 +3228,8 @@ public:
         if (option_arg.getAsInteger(0, *m_target_line)) {
           m_target_line.reset();
           return Status("Invalid target line: '%s'.", option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -2965,10 +3259,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const uint32_t target_line = ExtractLineNumber(m_options.m_target_line);
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBackUntilLine(target_line);
-    if (error.Fail()) {
+    if (Status error = thread.StepBackUntilLine(target_line); error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3003,8 +3297,9 @@ protected:
       return false;
     }
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBackUntilOutOfFunction();
-    if (error.Fail()) {
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
+
+    if (Status error = thread.StepBackUntilOutOfFunction(); error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3034,8 +3329,9 @@ protected:
       return false;
     }
 
-    Status error = m_exe_ctx.GetThreadPtr()->StepBackUntilStart();
-    if (error.Fail()) {
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
+
+    if (Status error = thread.StepBackUntilStart(); error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3065,10 +3361,11 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     StreamString canonical_breakpoint_id;
-    Status error = m_exe_ctx.GetThreadPtr()->ReverseContinue(
-        canonical_breakpoint_id);
-    if (error.Fail()) {
+
+    if (Status error = thread.ReverseContinue(canonical_breakpoint_id);
+        error.Fail()) {
       result.AppendErrorWithFormatv("Step back failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3112,9 +3409,8 @@ public:
           m_step_count.reset();
           return Status("Invalid statement count: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -3144,10 +3440,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->Replay(step_count);
-    if (error.Fail()) {
+    if (Status error = thread.Replay(step_count); error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3194,9 +3490,8 @@ public:
           m_step_count.reset();
           return Status("Invalid instruction count: '%s'.",
                         option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -3226,10 +3521,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const std::size_t step_count = ExtractStepCount(m_options.m_step_count);
 
-    Status error = m_exe_ctx.GetThreadPtr()->ReplayInstruction(step_count);
-    if (error.Fail()) {
+    if (Status error = thread.ReplayInstruction(step_count); error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3270,15 +3565,15 @@ public:
                           ExecutionContext *execution_context) override {
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
-      case 'a':
+      case 'a': {
+        Status error;
         m_target_address.emplace();
-        if (option_arg.getAsInteger(0, *m_target_address)) {
-          m_target_address.reset();
-          return Status("Invalid target address: '%s'.",
-                        option_arg.str().c_str());
-        } else {
-          return Status();
-        }
+        m_target_address = OptionArgParser::ToAddress(execution_context,
+                                                      option_arg,
+                                                      LLDB_INVALID_ADDRESS,
+                                                      &error);
+        return error;
+      }
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -3308,10 +3603,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const addr_t target_pc = ExtractAddress(m_options.m_target_address);
 
-    Status error = m_exe_ctx.GetThreadPtr()->ReplayUntilAddress(target_pc);
-    if (error.Fail()) {
+    if (Status error = thread.ReplayUntilAddress(target_pc); error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3356,9 +3651,8 @@ public:
         if (option_arg.getAsInteger(0, *m_target_line)) {
           m_target_line.reset();
           return Status("Invalid target line: '%s'.", option_arg.str().c_str());
-        } else {
-          return Status();
         }
+        return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
       }
@@ -3388,10 +3682,10 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     const uint32_t target_line = ExtractLineNumber(m_options.m_target_line);
 
-    Status error = m_exe_ctx.GetThreadPtr()->ReplayUntilLine(target_line);
-    if (error.Fail()) {
+    if (Status error = thread.ReplayUntilLine(target_line); error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3426,8 +3720,9 @@ protected:
       return false;
     }
 
-    Status error = m_exe_ctx.GetThreadPtr()->ReplayUntilOutOfFunction();
-    if (error.Fail()) {
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
+
+    if (Status error = thread.ReplayUntilOutOfFunction(); error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3457,8 +3752,9 @@ protected:
       return false;
     }
 
-    Status error = m_exe_ctx.GetThreadPtr()->ReplayUntilEnd();
-    if (error.Fail()) {
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
+
+    if (Status error = thread.ReplayUntilEnd(); error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;
@@ -3488,10 +3784,11 @@ protected:
       return false;
     }
 
+    Thread &thread = *m_exe_ctx.GetThreadPtr();
     StreamString canonical_breakpoint_id;
-    Status error = m_exe_ctx.GetThreadPtr()->ReplayContinue(
-        canonical_breakpoint_id);
-    if (error.Fail()) {
+
+    if (Status error = thread.ReplayContinue(canonical_breakpoint_id);
+        error.Fail()) {
       result.AppendErrorWithFormatv("Replay failed: {0}", error.AsCString());
       result.SetStatus(eReturnStatusFailed);
       return false;

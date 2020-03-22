@@ -314,6 +314,17 @@ void CommandInterpreter::Initialize() {
     AddAlias("ct", cmd_obj_sp);
   }
 
+  cmd_obj_sp = GetCommandSPExact("thread tracing jump", false);
+  if (cmd_obj_sp) {
+    AddAlias("jt", cmd_obj_sp);
+  }
+
+  cmd_obj_sp = GetCommandSPExact("thread tracing modification", false);
+  if (cmd_obj_sp) {
+    AddAlias("modification", cmd_obj_sp);
+    AddAlias("mod", cmd_obj_sp);
+  }
+
   cmd_obj_sp = GetCommandSPExact("thread tracing bookmark", false);
   if (cmd_obj_sp) {
     AddAlias("bookmark", cmd_obj_sp);

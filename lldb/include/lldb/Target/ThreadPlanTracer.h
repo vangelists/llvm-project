@@ -63,11 +63,11 @@ public:
 
   void EnableTracing();
   void DisableTracing();
-  void SuspendTracing(Thread::TracingToken token);
-  void ResumeTracing(Thread::TracingToken token);
+  void SuspendTracing(lldb::TracingToken token);
+  void ResumeTracing(lldb::TracingToken token);
 
   State GetState() const;
-  Thread::TracingToken GetTracingToken() const;
+  lldb::TracingToken GetTracingToken() const;
 
   void EnableSingleStepping();
   void DisableSingleStepping();
@@ -76,18 +76,18 @@ public:
 protected:
   Thread &m_thread;
 
-  void SetToken(Thread::TracingToken token);
+  void SetToken(lldb::TracingToken token);
   bool GetEvaluatingExpression() const;
   Stream *GetLogStream() const;
 
   virtual void Log();
-  virtual bool ShouldAcceptToken(Thread::TracingToken token) const {}
+  virtual bool ShouldAcceptToken(lldb::TracingToken token) const {}
 
 private:
   bool TracerExplainsStop();
 
   State m_state;
-  Thread::TracingToken m_token;
+  lldb::TracingToken m_token;
 
   bool m_single_step;
   bool m_evaluating_expression; ///< Denotes whether expression evaluation is
@@ -290,34 +290,6 @@ public:
   ///
   Status ReplayContinue(Stream &canonical_breakpoint_id);
 
-  /// Restores the register and variable values of the stack frame with the
-  /// provided index.
-  ///
-  /// \param[in] frame_idx
-  ///     The stack frame index whose register and variable values to restore.
-  ///
-  void RestoreStackFrameState(std::size_t frame_idx);
-
-  /// Returns `true` if the state of the active stack frames is currently being
-  /// emulated by this tracer in order to mimic a previous point in time.
-  ///
-  /// \return
-  ///     `true` if the state of the active stack frames is currently being
-  ///     emulated by this tracer in order to mimic a previous point in time.
-  ///
-  bool IsStackFrameStateEmulated() const;
-
-  /// Returns the recorded register values for the given stack frame.
-  ///
-  /// \param[in] frame_idx
-  ///     The index of the stack frame whose register values to get.
-  ///
-  /// \return
-  ///     The recorded register values for the given stack frame.
-  ///
-  const RegisterContext::RegisterValues &
-  GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx) const;
-
   /// Returns the ID of the currently active tracepoint.
   ///
   /// \return
@@ -326,16 +298,87 @@ public:
   ///
   Thread::TracepointID GetCurrentTracepointID() const;
 
-  /// Returns the value of PC at the given location in recorded history.
+  /// Jumps to the given tracepoint.
   ///
-  /// \param[in] location
-  ///     The location in recorded history whose PC value to return.
+  /// \param[in] destination
+  ///     The destination tracepoint.
   ///
   /// \return
-  ///     The value of PC at the given location in recorded history, if any;
-  ///     `LLDB_INVALID_ADDRESS` otherwise.
+  ///     An error value, in case the jump fails.
   ///
-  lldb::addr_t GetPC(Thread::TracepointID location);
+  Status JumpToTracepoint(Thread::TracepointID destination);
+
+  /// Lists up to the requested number of source locations where the value of
+  /// the given register was modified in recorded history.
+  ///
+  /// \param[in] stream
+  ///     The stream to list modifications.
+  ///
+  /// \param[in] register_name
+  ///     The name of the register whose modifications to list.
+  ///
+  /// \param[in] num_locations
+  ///     The maximum number of modifications to list.
+  ///
+  /// \param[in] write_timing
+  ///     Whether to list modifications that took place at a previous or later
+  ///     point in time or both.
+  ///
+  /// \return
+  ///     An error value, in case modification listing fails.
+  ///
+  Status ListRegisterWriteLocations(Stream &stream,
+                                    llvm::StringRef register_name,
+                                    std::size_t num_locations,
+                                    lldb::TracedWriteTiming write_timing);
+
+  /// Lists up to the requested number of source locations where the value of
+  /// the given variable was modified in recorded history.
+  ///
+  /// \param[in] stream
+  ///     The stream to list modifications.
+  ///
+  /// \param[in] variable_name
+  ///     The name of the variable whose modifications to list.
+  ///
+  /// \param[in] num_locations
+  ///     The maximum number of modifications to list.
+  ///
+  /// \param[in] write_timing
+  ///     Whether to list modifications that took place at a previous or later
+  ///     point in time or both.
+  ///
+  /// \return
+  ///     An error value, in case modification listing fails.
+  ///
+  Status ListVariableWriteLocations(Stream &stream,
+                                    llvm::StringRef variable_name,
+                                    std::size_t num_locations,
+                                    lldb::TracedWriteTiming write_timing);
+
+  /// Lists up to the requested number of source locations where the contents of
+  /// the given heap address were modified in recorded history.
+  ///
+  /// \param[in] stream
+  ///     The stream to list modifications.
+  ///
+  /// \param[in] heap_address
+  ///     The heap address whose modifications to list.
+  ///
+  /// \param[in] num_locations
+  ///     The maximum number of modifications to list.
+  ///
+  /// \param[in] write_timing
+  ///     Whether to list modifications that took place at a previous or later
+  ///     point in time or both.
+  ///
+  /// \return
+  ///     An error value, in case modification listing fails.
+  ///
+  Status ListHeapAddressWriteLocations(Stream &stream,
+                                       lldb::addr_t heap_address,
+                                       std::size_t num_locations,
+                                       lldb::TracedWriteTiming write_timing);
 
   /// Creates a bookmark at the requested location in recorded history.
   ///
@@ -349,7 +392,7 @@ public:
   ///     An error value, in case bookmark creation fails.
   ///
   Status CreateBookmark(Thread::TracepointID location,
-                        std::string_view name = {});
+                        llvm::StringRef name = {});
 
   /// Deletes the bookmark marking the requested location.
   ///
@@ -400,7 +443,7 @@ public:
   /// \return
   ///     An error value, in case bookmark renaming fails.
   ///
-  Status RenameBookmark(Thread::TracepointID location, std::string_view name);
+  Status RenameBookmark(Thread::TracepointID location, llvm::StringRef name);
 
   /// Moves the bookmark from the current location to a new one.
   ///
@@ -415,6 +458,34 @@ public:
   ///
   Status MoveBookmark(Thread::TracepointID old_location,
                       Thread::TracepointID new_location);
+
+  /// Restores the register and variable values of the stack frame with the
+  /// provided index.
+  ///
+  /// \param[in] frame_idx
+  ///     The stack frame index whose register and variable values to restore.
+  ///
+  void RestoreStackFrameState(std::size_t frame_idx);
+
+  /// Returns `true` if the state of the active stack frames is currently being
+  /// emulated by this tracer in order to mimic a previous point in time.
+  ///
+  /// \return
+  ///     `true` if the state of the active stack frames is currently being
+  ///     emulated by this tracer in order to mimic a previous point in time.
+  ///
+  bool IsStackFrameStateEmulated() const;
+
+  /// Returns the recorded register values for the given stack frame.
+  ///
+  /// \param[in] frame_idx
+  ///     The index of the stack frame whose register values to get.
+  ///
+  /// \return
+  ///     The recorded register values for the given stack frame.
+  ///
+  const RegisterContext::SavedRegisterValues &
+  GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx) const;
 
 protected:
   /// Initializes this tracer.
@@ -448,7 +519,7 @@ protected:
   void Log() override;
 
   /// Returns `true` if the given token has higher privilege than the currently
-  /// held one, if any (see `Thread::TracingToken` for more details).
+  /// held one, if any (see `lldb::TracingToken` for more details).
   ///
   /// \param[in] token
   ///     The token whose privilege to check against the current one.
@@ -456,18 +527,9 @@ protected:
   /// \return
   ///     `true` if the given token has higher privilege than the current one.
   ///
-  bool ShouldAcceptToken(Thread::TracingToken token) const override;
+  bool ShouldAcceptToken(lldb::TracingToken token) const override;
 
 private:
-  using StackFrameRegisterValues = std::unordered_map<std::size_t,
-                                                      RegisterValue>;
-  using StackFrameVariableValues = std::unordered_map<std::size_t,
-                                                      DataExtractor>;
-  using RegisterValues = std::vector<StackFrameRegisterValues>;
-  using VariableValues = std::vector<StackFrameVariableValues>;
-  using ThreadPlans = std::vector<lldb::ThreadPlanSP>;
-  using StackFrames = StackFrameList::StackFrameListCheckpointUP;
-
   /// \struct HeapData
   ///
   /// Snapshot of a heap region at a certain point in time.
@@ -475,13 +537,13 @@ private:
   struct HeapData {
     /// Constructs this `HeapData` object.
     ///
-    /// \param[in] address
-    ///     The original address of the saved heap region.
+    /// \param[in] base
+    ///     The original base address of the saved heap region.
     ///
     /// \param[in] data
     ///     A copy of the data contained in the saved heap region.
     ///
-    HeapData(lldb::addr_t address, DataBufferHeap &&data);
+    HeapData(lldb::addr_t base, DataBufferHeap &&data);
 
     /// Enable move construction and assignment.
     ///
@@ -496,9 +558,44 @@ private:
     ///
     ~HeapData();
 
-    lldb::addr_t address; ///< The original address of the saved heap region.
+    /// Returns `true` if the given address is part of the saved heap region.
+    ///
+    /// \param[in] address
+    ///
+    /// \return
+    ///     `true` if the given address is part of the saved heap region.
+    ///
+    bool Contains(lldb::addr_t address) const;
+
+    /// Dumps the saved data in the provided stream.
+    ///
+    /// \param[in] stream
+    ///     The stream to dump the saved data.
+    ///
+    void Dump(Stream &stream) const;
+
+    lldb::addr_t base; ///< The original base address of the saved heap region.
     DataBufferHeap data; ///< The data contained in the saved heap region.
+    bool modified; ///< Whether the data changed compared to the last snapshot.
   };
+
+  /// \struct SavedVariableValue
+  ///
+  /// Snapshot of a variable at a certain point in time.
+  ///
+  struct SavedVariableValue {
+    DataExtractor data;  ///< The value of the variable.
+    bool modified; ///< Whether the value changed compared to the last snapshot.
+  };
+
+  using VariableID = std::size_t;
+  using StackFrameRegisterValues = RegisterContext::SavedRegisterValues;
+  using StackFrameVariableValues = std::unordered_map<VariableID,
+                                                      SavedVariableValue>;
+  using RegisterValues = std::vector<StackFrameRegisterValues>;
+  using VariableValues = std::vector<StackFrameVariableValues>;
+  using ThreadPlans = std::vector<lldb::ThreadPlanSP>;
+  using StackFrames = StackFrameList::StackFrameListCheckpointUP;
 
   /// \struct Tracepoint
   ///
@@ -506,6 +603,9 @@ private:
   ///
   struct Tracepoint {
     /// Constructs this `Tracepoint` object.
+    ///
+    /// \param[in] id
+    ///     The ID of this tracepoint.
     ///
     /// \param[in] registers
     ///     The values of stack frame registers at this point in time.
@@ -525,9 +625,9 @@ private:
     /// \param[in] line
     ///     The source line at this point in time, if available.
     ///
-    Tracepoint(RegisterValues &&registers, VariableValues &&variables,
-               StackFrames &&frames, lldb::StopInfoSP &&stop_info,
-               ThreadPlans &&completed_plans,
+    Tracepoint(Thread::TracepointID id, RegisterValues &&registers,
+               VariableValues &&variables, StackFrames &&frames,
+               lldb::StopInfoSP &&stop_info, ThreadPlans &&completed_plans,
                uint32_t line = LLDB_INVALID_LINE_NUMBER);
 
     /// Enable move construction and assignment.
@@ -543,6 +643,7 @@ private:
     ///
     ~Tracepoint();
 
+    Thread::TracepointID id; ///< The ID of this tracepoint.
     RegisterValues registers; ///< The values of stack frame registers.
     VariableValues variables; ///< The values of stack frame variables.
     llvm::Optional<HeapData> heap_data; ///< The contents of a heap region right
@@ -561,12 +662,18 @@ private:
                                        Thread::TracingBookmark>;
   using TracepointCallback = std::function<Status(Tracepoint &)>;
 
+  using WriteLocations = std::map<Thread::TracepointID, std::string>;
+  using WriteLocationCollector = std::function<Status(Tracepoint &,
+                                                      WriteLocations &,
+                                                      std::size_t)>;
+  using WriteLocationFinalizer = std::function<void(void)>;
+
   /// \enum NavigationDirection
   ///
   /// Indicates the direction in which the timeline is traversed in order to
   /// step back or replay.
   ///
-  enum NavigationDirection : bool {
+  enum class NavigationDirection : bool {
     Forward,
     Reverse
   };
@@ -851,8 +958,77 @@ private:
   ///     The recorded PC value for the stack frame with the given ID from
   ///     the provided snapshot.
   ///
-  lldb::addr_t GetRecordedPCForStackFrame(Tracepoint &snapshot,
+  lldb::addr_t GetRecordedPCForStackFrame(Tracepoint &tracepoint,
                                           std::size_t frame_idx = 0);
+
+  /// Extracts and returns the index of the stack frame with the given ID from
+  /// the provided snapshot.
+  ///
+  /// \param[in] tracepoint
+  ///     The snapshot to look into.
+  ///
+  /// \param[in] frame_id
+  ///     The ID of the stack frame whose last known index to search.
+  ///
+  /// \return
+  ///      The index of the stack frame with the given ID from the provided
+  ///      snapshot, if found; `LLDB_INVALID_FRAME_ID` otherwise.
+  ///
+  std::size_t GetRecordedStackFrameIndex(Tracepoint &tracepoint,
+                                         const StackID &frame_id);
+
+  /// Extracts and returns the saved value of the stack frame register with the
+  /// given ID from the provided snapshot.
+  ///
+  /// \param[in] tracepoint
+  ///     The snapshot to look into.
+  ///
+  /// \param[in] frame_id
+  ///     The ID of the stack frame that owns the register to search.
+  ///
+  /// \param[in] register_id
+  ///     The ID of the register whose saved value to return.
+  ///
+  /// \return
+  ///     The value of the stack frame register with the given ID from the
+  ///     provided snapshot, if found; `nullptr` otherwise.
+  ///
+  RegisterContext::SavedRegisterValue *
+  GetRecordedStackFrameRegisterValue(Tracepoint &tracepoint,
+                                     const StackID &frame_id,
+                                     std::size_t register_id);
+
+  /// Extracts and returns the saved value of the stack frame variable with the
+  /// given ID from the provided snapshot.
+  ///
+  /// \param[in] tracepoint
+  ///     The snapshot to look into.
+  ///
+  /// \param[in] frame_id
+  ///     The ID of the stack frame that owns the variable to search.
+  ///
+  /// \param[in] variable_id
+  ///     The ID of the variable whose saved value to return.
+  ///
+  /// \return
+  ///     The value of the stack frame variable with the given ID from the
+  ///     provided snapshot, if found; `nullptr` otherwise.
+  ///
+  SavedVariableValue *
+  GetRecordedStackFrameVariableValue(Tracepoint &tracepoint,
+                                     const StackID &frame_id,
+                                     std::size_t variable_id);
+
+  /// Dumps the source location information of the provided tracepoint based on
+  /// its PC at the time of capture.
+  ///
+  /// \param[in] tracepoint
+  ///     The tracepoint whose source location information to dump.
+  ///
+  /// \param[in] stream
+  ///     The stream to dump the source location information of the tracepoint.
+  ///
+  void DumpSourceLocationInfo(Tracepoint &tracepoint, Stream &stream);
 
   /// Calculates the address described by the provided instruction operand.
   ///
@@ -881,7 +1057,7 @@ private:
   ///     Executed on each iteration. A successful return status ends stepping.
   ///
   /// \param[in] initializer
-  ///     Called before stepping with the current tracepoint as argument.
+  ///     Called before stepping using the current tracepoint as argument.
   ///     A failed return status makes the function return immediately.
   ///
   /// \param[in] past_begin
@@ -890,10 +1066,9 @@ private:
   /// \return
   ///     An error value, in case stepping back fails.
   ///
-  Status StepBackInternal(
-      TracepointCallback &&predicate,
-      TracepointCallback &&initializer = GetDefaultTracepointCallback(),
-      TracepointCallback &&past_begin = GetDefaultTracepointCallback());
+  Status StepBackInternal(TracepointCallback &&predicate,
+                          TracepointCallback &&initializer = {},
+                          TracepointCallback &&past_begin = {});
 
   /// Replays until `predicate` returns a success status or end of history is
   /// reached.
@@ -902,7 +1077,7 @@ private:
   ///     Executed on each iteration. A successful return status ends replay.
   ///
   /// \param[in] initializer
-  ///     Called before replaying with the current tracepoint as argument.
+  ///     Called before replaying using the current tracepoint as argument.
   ///     A failed return status makes the function return immediately.
   ///
   /// \param[in] past_end
@@ -911,10 +1086,61 @@ private:
   /// \return
   ///     An error value, in case replay fails.
   ///
-  Status ReplayInternal(
-      TracepointCallback &&predicate,
-      TracepointCallback &&initializer = GetDefaultTracepointCallback(),
-      TracepointCallback &&past_end = GetDefaultTracepointCallback());
+  Status ReplayInternal(TracepointCallback &&predicate,
+                        TracepointCallback &&initializer = {},
+                        TracepointCallback &&past_end = {});
+
+  /// Helper method for `List{Variable, Register, HeapAddress}WriteLocations()`.
+  ///
+  /// \param[in] stream
+  ///     Stream to list modifications.
+  ///
+  /// \param[in] value_string
+  ///     Text representation of the value whose write locations to list.
+  ///
+  /// \param[in] num_locations
+  ///     The maximum number of modifications to list.
+  ///
+  /// \param[in] write_timing
+  ///     Whether to list modifications that took place at a previous or later
+  ///     point in time or both.
+  ///
+  /// \param[in] collector
+  ///     Callback responsible for recognizing and collecting write locations.
+  ///
+  /// \param[in] finalizer
+  ///     Optional callback to be called before printing results.
+  ///
+  /// \return
+  ///     An error value, in case write location listing fails.
+  ///
+  Status ListWriteLocations(
+      Stream &stream, const llvm::Twine &value_string,
+      std::size_t num_locations, lldb::TracedWriteTiming write_timing,
+      WriteLocationCollector &&collector,
+      WriteLocationFinalizer &&finalizer = {});
+
+  /// Collects all past write locations until `predicate` returns a success
+  /// status or beginning of history is reached.
+  ///
+  /// \param[in] collector
+  ///     Executed on each iteration. A successful return status ends execution.
+  ///
+  /// \return
+  ///     An error value, in case write location collection fails.
+  ///
+  Status CollectPastWriteLocations(TracepointCallback collector);
+
+  /// Collects all future write locations until `predicate` returns a success
+  /// status or end of history is reached.
+  ///
+  /// \param[in] collector
+  ///     Executed on each iteration. A successful return status ends execution.
+  ///
+  /// \return
+  ///     An error value, in case write location collection fails.
+  ///
+  Status CollectFutureWriteLocations(TracepointCallback collector);
 
   /// Traverses the recorded history.
   ///
@@ -931,24 +1157,13 @@ private:
   /// \return
   ///     The number of instructions to step back or replay.
   ///
-  /// \note
-  ///     Helper function for `StepBackInternal()` and `ReplayInternal()`.
-  ///
   template<typename TimelineIteratorType>
-  llvm::Expected<std::size_t> TraverseTimeline(
-      const TimelineIteratorType &current_tracepoint,
-      const TimelineIteratorType &timeline_limit,
-      TracepointCallback &&predicate,
-      TracepointCallback &&initializer,
-      TracepointCallback &&past_limit);
-
-  /// Returns a callback with an empty body, accepted by `StepBackInternal()`
-  /// and `ReplayInternal().
-  ///
-  /// \return
-  ///     A callback that always returns a successful status.
-  ///
-  static inline TracepointCallback GetDefaultTracepointCallback();
+  llvm::Expected<std::size_t>
+  TraverseTimeline(const TimelineIteratorType &current_tracepoint,
+                   const TimelineIteratorType &timeline_limit,
+                   TracepointCallback &&predicate,
+                   TracepointCallback &&initializer = {},
+                   TracepointCallback &&past_limit = {});
 
   /// Prints the given formatted message to the default logging stream using
   /// the prefix "error: " and a newline in the end.

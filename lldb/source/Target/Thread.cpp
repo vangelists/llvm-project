@@ -234,19 +234,17 @@ Thread::ThreadEventData::GetStackFrameFromEvent(const Event *event_ptr) {
 
 // TracingBookmark class
 
-Thread::TracingBookmark::TracingBookmark(TracepointID location,
-                                         std::string_view name,
-                                         addr_t pc)
-    : m_location(location), m_name(name), m_pc(pc) {}
+Thread::TracingBookmark::TracingBookmark(Thread &thread, TracepointID location,
+                                         llvm::StringRef name, addr_t pc)
+    : m_thread(thread), m_name(name) {
+  SetLocation(location, pc);
+}
 
 Thread::TracingBookmark::TracingBookmark(TracingBookmark &&) = default;
 
 Thread::TracingBookmark::~TracingBookmark() = default;
 
-Thread::TracingBookmark &
-Thread::TracingBookmark::operator=(TracingBookmark &&) = default;
-
-std::string_view Thread::TracingBookmark::GetName() const {
+llvm::StringRef Thread::TracingBookmark::GetName() const {
   return m_name;
 }
 
@@ -259,22 +257,39 @@ Thread::TracepointID Thread::TracingBookmark::GetLocation() const {
 }
 
 addr_t Thread::TracingBookmark::GetPC() const {
-  return m_pc;
+  return m_pc.GetLoadAddress(m_thread.CalculateTarget().get());
 }
 
-void Thread::TracingBookmark::GetDescription(Stream &stream) const {
-  stream.Format("bookmark at tracepoint #{0} ({1:x}): {2}", m_location, m_pc,
-                GetFormattedName());
+void Thread::TracingBookmark::GetDescription(
+    Stream &stream, lldb::DescriptionLevel level) const {
+  switch (level) {
+  case lldb::eDescriptionLevelBrief:
+  case lldb::eDescriptionLevelInitial:
+    stream.Format("bookmark at tracepoint {0}: {1}", m_location,
+                  GetFormattedName());
+    break;
+  case lldb::eDescriptionLevelFull:
+  case lldb::eDescriptionLevelVerbose:
+    SymbolContext sc;
+    m_pc.CalculateSymbolContext(&sc);
+    ExecutionContextScope *exe_scope = m_thread.CalculateProcess().get();
+    stream.Format("{0}: {1}\n  └─ ", m_location, GetFormattedName());
+    sc.DumpStopContext(&stream, exe_scope, m_pc, false, true, false, true,
+                       true);
+    stream.PutCString(", address = ");
+    m_pc.Dump(&stream, exe_scope, Address::DumpStyleLoadAddress);
+    break;
+  }
   stream.EOL();
 }
 
-void Thread::TracingBookmark::SetName(std::string_view name) {
+void Thread::TracingBookmark::SetName(llvm::StringRef name) {
   m_name = name;
 }
 
 void Thread::TracingBookmark::SetLocation(TracepointID location, addr_t pc) {
   m_location = location;
-  m_pc = pc;
+  m_pc.SetOpcodeLoadAddress(pc, m_thread.CalculateTarget().get());
 }
 
 // Thread class
@@ -1345,8 +1360,8 @@ void Thread::DisableTracing() {
 }
 
 void Thread::SuspendTracing(TracingToken token) {
-  if (token == TracingToken::eExpressionEvaluation ||
-      token == TracingToken::eUserCommand) {
+  if (token == TracingToken::ExpressionEvaluation ||
+      token == TracingToken::UserCommand) {
     GetBasePlanTracer()->SuspendTracing(token);
   } else {
     llvm_unreachable("Invalid tracing token!");
@@ -1354,8 +1369,8 @@ void Thread::SuspendTracing(TracingToken token) {
 }
 
 void Thread::ResumeTracing(TracingToken token) {
-  if (token == TracingToken::eExpressionEvaluation ||
-      token == TracingToken::eUserCommand) {
+  if (token == TracingToken::ExpressionEvaluation ||
+      token == TracingToken::UserCommand) {
     GetBasePlanTracer()->ResumeTracing(token);
   } else {
     llvm_unreachable("Invalid tracing token!");
@@ -2429,7 +2444,7 @@ bool Thread::IsStackFrameStateEmulated() {
   return GetBasePlanInstructionTracer().IsStackFrameStateEmulated();
 }
 
-const RegisterContext::RegisterValues &
+const RegisterContext::SavedRegisterValues &
 Thread::GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx) {
   return GetBasePlanInstructionTracer().
       GetRecordedRegisterValuesForStackFrame(frame_idx);
@@ -2439,12 +2454,36 @@ Thread::TracepointID Thread::GetCurrentTracepointID() {
   return GetBasePlanInstructionTracer().GetCurrentTracepointID();
 }
 
-addr_t Thread::GetPCAtTracepoint(TracepointID location) {
-  return GetBasePlanInstructionTracer().GetPC(location);
+Status Thread::JumpToTracepoint(TracepointID destination) {
+  return GetBasePlanInstructionTracer().JumpToTracepoint(destination);
+}
+
+Status Thread::ListRegisterWriteLocations(Stream &stream,
+                                          llvm::StringRef reg_name,
+                                          std::size_t num_locs,
+                                          TracedWriteTiming write_timing) {
+  return GetBasePlanInstructionTracer().
+      ListRegisterWriteLocations(stream, reg_name, num_locs, write_timing);
+}
+
+Status Thread::ListVariableWriteLocations(Stream &stream,
+                                          llvm::StringRef var_name,
+                                          std::size_t num_locs,
+                                          TracedWriteTiming write_timing) {
+  return GetBasePlanInstructionTracer().
+      ListVariableWriteLocations(stream, var_name, num_locs, write_timing);
+}
+
+Status Thread::ListHeapAddressWriteLocations(Stream &stream,
+                                             lldb::addr_t heap_addr,
+                                             std::size_t num_locs,
+                                             TracedWriteTiming write_timing) {
+  return GetBasePlanInstructionTracer().
+      ListHeapAddressWriteLocations(stream, heap_addr, num_locs, write_timing);
 }
 
 Status
-Thread::CreateTracingBookmark(TracepointID location, std::string_view name) {
+Thread::CreateTracingBookmark(TracepointID location, llvm::StringRef name) {
   return GetBasePlanInstructionTracer().CreateBookmark(location, name);
 }
 
@@ -2466,7 +2505,7 @@ Status Thread::JumpToTracingBookmark(TracepointID location) {
 }
 
 Status
-Thread::RenameTracingBookmark(TracepointID location, std::string_view name) {
+Thread::RenameTracingBookmark(TracepointID location, llvm::StringRef name) {
   return GetBasePlanInstructionTracer().RenameBookmark(location, name);
 }
 
