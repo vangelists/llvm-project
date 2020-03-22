@@ -1876,6 +1876,11 @@ protected:
     return ExtractOption(tracepoint_id_opt, Thread::InvalidTracepointID);
   }
 
+  Thread::TracingBookmarkID ExtractTracingBookmarkID(
+      llvm::Optional<Thread::TracingBookmarkID> bookmark_id_opt) {
+    return ExtractOption(bookmark_id_opt, Thread::InvalidTracingBookmarkID);
+  }
+
   std::size_t ExtractLocationCount(llvm::Optional<std::size_t> loc_count_opt) {
     return ExtractOption(loc_count_opt, static_cast<std::size_t>(5));
   }
@@ -2350,7 +2355,7 @@ public:
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
       m_tracepoint_id.reset();
-      m_tracepoint_name.clear();
+      m_bookmark_name.clear();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
@@ -2366,7 +2371,7 @@ public:
         }
         return Status();
       case 'n':
-        m_tracepoint_name.assign(option_arg);
+        m_bookmark_name.assign(option_arg);
         return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
@@ -2378,7 +2383,7 @@ public:
     }
 
     llvm::Optional<Thread::TracepointID> m_tracepoint_id;
-    std::string m_tracepoint_name;
+    std::string m_bookmark_name;
   };
 
   CommandObjectThreadTracingBookmarkCreate(CommandInterpreter &interpreter)
@@ -2399,21 +2404,22 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
-    const llvm::StringRef name = m_options.m_tracepoint_name;
-    const Thread::TracepointID location = m_options.m_tracepoint_id
-                                              ? *m_options.m_tracepoint_id
-                                              : thread.GetCurrentTracepointID();
+    const Thread::TracepointID tracepoint_id =
+        m_options.m_tracepoint_id ? *m_options.m_tracepoint_id
+                                  : thread.GetCurrentTracepointID();
 
-    if (Status error = thread.CreateTracingBookmark(location, name);
-        error.Fail()) {
-      result.AppendErrorWithFormatv("Bookmark creation failed: {0}",
-                                    error.AsCString());
+    llvm::Expected<Thread::TracingBookmarkID> bookmark_id =
+        thread.CreateTracingBookmark(tracepoint_id, m_options.m_bookmark_name);
+    if (!bookmark_id) {
+      result.AppendErrorWithFormatv(
+          "Bookmark creation failed: {0}",
+          llvm::toString(std::move(bookmark_id.takeError())));
       result.SetStatus(eReturnStatusFailed);
       return false;
     }
 
     llvm::Expected<const Thread::TracingBookmark &> bookmark =
-        thread.GetTracingBookmark(location);
+        thread.GetTracingBookmarkAtTracepoint(tracepoint_id);
     if (bookmark) {
       Stream &stream = result.GetOutputStream();
       stream.PutCString("Created ");
@@ -2444,19 +2450,18 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_tracepoint_id.reset();
+      m_bookmark_id.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
                           ExecutionContext *execution_context) override {
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
-      case 't':
-        m_tracepoint_id.emplace();
-        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
-          m_tracepoint_id.reset();
-          return Status("Invalid tracepoint ID: '%s'.",
-                        option_arg.str().c_str());
+      case 'b':
+        m_bookmark_id.emplace();
+        if (option_arg.getAsInteger(0, *m_bookmark_id)) {
+          m_bookmark_id.reset();
+          return Status("Invalid bookmark ID: '%s'.", option_arg.str().c_str());
         }
         return Status();
       default:
@@ -2468,13 +2473,13 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_delete_options);
     }
 
-    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
+    llvm::Optional<Thread::TracingBookmarkID> m_bookmark_id;
   };
 
   CommandObjectThreadTracingBookmarkDelete(CommandInterpreter &interpreter)
       : CommandObjectThreadRecordReplay(interpreter, "delete",
-          "Delete the bookmark marking the provided tracepoint.",
-          "bookmark delete"), m_options() {}
+          "Delete the bookmark with the provided ID.", "bookmark delete"),
+        m_options() {}
 
   ~CommandObjectThreadTracingBookmarkDelete() override = default;
 
@@ -2489,10 +2494,22 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
-    const Thread::TracepointID location =
-        ExtractTracepointID(m_options.m_tracepoint_id);
+    const Thread::TracingBookmarkID bookmark_id =
+        ExtractTracingBookmarkID(m_options.m_bookmark_id);
 
-    if (Status error = thread.DeleteTracingBookmark(location); error.Fail()) {
+    llvm::Expected<const Thread::TracingBookmark &> bookmark =
+        thread.GetTracingBookmark(bookmark_id);
+    if (!bookmark) {
+      result.AppendError(llvm::toString(std::move(bookmark.takeError())));
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
+    const Thread::TracepointID marked_tracepoint_id =
+        bookmark->GetMarkedTracepointID();
+
+    if (Status error = thread.DeleteTracingBookmark(bookmark_id);
+        error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark deletion failed: {0}",
                                     error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -2500,7 +2517,7 @@ protected:
     }
 
     result.GetOutputStream().Format("Deleted bookmark at tracepoint {0}\n",
-                                    location);
+                                    marked_tracepoint_id);
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
     return true;
   }
@@ -2524,19 +2541,18 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_tracepoint_id.reset();
+      m_bookmark_id.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
                           ExecutionContext *execution_context) override {
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
-      case 't':
-        m_tracepoint_id.emplace();
-        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
-          m_tracepoint_id.reset();
-          return Status("Invalid tracepoint ID: '%s'.",
-                        option_arg.str().c_str());
+      case 'b':
+        m_bookmark_id.emplace();
+        if (option_arg.getAsInteger(0, *m_bookmark_id)) {
+          m_bookmark_id.reset();
+          return Status("Invalid bookmark ID: '%s'.", option_arg.str().c_str());
         }
         return Status();
       default:
@@ -2548,13 +2564,13 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_list_options);
     }
 
-    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
+    llvm::Optional<Thread::TracingBookmarkID> m_bookmark_id;
   };
 
   CommandObjectThreadTracingBookmarkList(CommandInterpreter &interpreter)
       : CommandObjectThreadRecordReplay(interpreter, "list",
-          "List either all bookmarks or the bookmark marking the provided "
-          "tracepoint, if any.", "bookmark list"), m_options() {}
+          "List either all bookmarks or the bookmark with the provided ID.",
+          "bookmark list"), m_options() {}
 
   ~CommandObjectThreadTracingBookmarkList() override = default;
 
@@ -2571,9 +2587,9 @@ protected:
     Thread &thread = *m_exe_ctx.GetThreadPtr();
     Stream &stream = result.GetOutputStream();
 
-    if (m_options.m_tracepoint_id) {
+    if (m_options.m_bookmark_id) {
       llvm::Expected<const Thread::TracingBookmark &> bookmark =
-          thread.GetTracingBookmark(*m_options.m_tracepoint_id);
+          thread.GetTracingBookmark(*m_options.m_bookmark_id);
       if (bookmark) {
         bookmark->GetDescription(stream, eDescriptionLevelFull);
         result.SetStatus(eReturnStatusSuccessFinishNoResult);
@@ -2588,7 +2604,9 @@ protected:
       if (!bookmarks.empty()) {
         stream.PutCString("Current bookmarks:\n");
         for (const Thread::TracingBookmark &bookmark : bookmarks) {
-          if (bookmark.GetLocation() == thread.GetCurrentTracepointID()) {
+          const Thread::TracepointID bookmarked_tracepoint_id =
+              bookmark.GetMarkedTracepointID();
+          if (bookmarked_tracepoint_id == thread.GetCurrentTracepointID()) {
             stream.PutCString("* ");
           } else {
             stream.PutCString("  ");
@@ -2620,19 +2638,18 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_tracepoint_id.reset();
+      m_bookmark_id.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
                           ExecutionContext *execution_context) override {
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
-      case 't':
-        m_tracepoint_id.emplace();
-        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
-          m_tracepoint_id.reset();
-          return Status("Invalid tracepoint ID: '%s'.",
-                        option_arg.str().c_str());
+      case 'b':
+        m_bookmark_id.emplace();
+        if (option_arg.getAsInteger(0, *m_bookmark_id)) {
+          m_bookmark_id.reset();
+          return Status("Invalid bookmark ID: '%s'.", option_arg.str().c_str());
         }
         return Status();
       default:
@@ -2644,13 +2661,13 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_jump_options);
     }
 
-    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
+    llvm::Optional<Thread::TracingBookmarkID> m_bookmark_id;
   };
 
   CommandObjectThreadTracingBookmarkJump(CommandInterpreter &interpreter)
       : CommandObjectThreadRecordReplay(interpreter, "jump",
-          "Jump to the tracepoint marked by the bookmark.", "bookmark jump"),
-        m_options() {}
+          "Jump to the tracepoint marked by the bookmark with the provided ID.",
+          "bookmark jump"), m_options() {}
 
   ~CommandObjectThreadTracingBookmarkJump() override = default;
 
@@ -2665,10 +2682,11 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
-    const Thread::TracepointID location =
-        ExtractTracepointID(m_options.m_tracepoint_id);
+    const Thread::TracingBookmarkID bookmark_id =
+        ExtractTracingBookmarkID(m_options.m_bookmark_id);
 
-    if (Status error = thread.JumpToTracingBookmark(location); error.Fail()) {
+    if (Status error = thread.JumpToTracingBookmark(bookmark_id);
+        error.Fail()) {
       result.AppendErrorWithFormatv("Jump to bookmark failed: {0}",
                                     error.AsCString());
       result.SetStatus(eReturnStatusFailed);
@@ -2676,14 +2694,17 @@ protected:
     }
 
     llvm::Expected<const Thread::TracingBookmark &> bookmark =
-        thread.GetTracingBookmark(location);
-    llvm::consumeError(std::move(bookmark.takeError()));
+        thread.GetTracingBookmark(bookmark_id);
+    if (!bookmark) {
+      result.AppendError(llvm::toString(std::move(bookmark.takeError())));
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
 
     StreamString stop_reason;
-    stop_reason.Format("jump to bookmark {0}: {1}", location,
+    stop_reason.Format("jump to bookmark {0}: {1}", bookmark_id,
                        bookmark->GetFormattedName());
     PrintStopLocationInfo(stop_reason.GetString(), result);
-
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
     return true;
   }
@@ -2707,24 +2728,23 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_tracepoint_id.reset();
-      m_tracepoint_name.clear();
+      m_bookmark_id.reset();
+      m_bookmark_name.clear();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
                           ExecutionContext *execution_context) override {
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
-      case 't':
-        m_tracepoint_id.emplace();
-        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
-          m_tracepoint_id.reset();
-          return Status("Invalid tracepoint ID: '%s'.",
-                        option_arg.str().c_str());
+      case 'b':
+        m_bookmark_id.emplace();
+        if (option_arg.getAsInteger(0, *m_bookmark_id)) {
+          m_bookmark_id.reset();
+          return Status("Invalid bookmark ID: '%s'.", option_arg.str().c_str());
         }
         return Status();
       case 'n':
-        m_tracepoint_name.assign(option_arg);
+        m_bookmark_name.assign(option_arg);
         return Status();
       default:
         return Status("Invalid short option character '%c'.", short_option);
@@ -2735,14 +2755,14 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_rename_options);
     }
 
-    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
-    std::string m_tracepoint_name;
+    llvm::Optional<Thread::TracingBookmarkID> m_bookmark_id;
+    std::string m_bookmark_name;
   };
 
   CommandObjectThreadTracingBookmarkRename(CommandInterpreter &interpreter)
       : CommandObjectThreadRecordReplay(interpreter, "rename",
-          "Rename the bookmark marking the current or the provided tracepoint, "
-          "if any.", "bookmark rename"), m_options() {}
+          "Rename the bookmark with the provided ID.", "bookmark rename"),
+        m_options() {}
 
   ~CommandObjectThreadTracingBookmarkRename() override = default;
 
@@ -2757,21 +2777,11 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
-    const Thread::TracepointID location = m_options.m_tracepoint_id
-                                              ? *m_options.m_tracepoint_id
-                                              : thread.GetCurrentTracepointID();
+    const llvm::StringRef name = m_options.m_bookmark_name;
+    const Thread::TracepointID bookmark_id =
+        ExtractTracingBookmarkID(m_options.m_bookmark_id);
 
-    llvm::Expected<const Thread::TracingBookmark &> bookmark =
-        thread.GetTracingBookmark(location);
-    if (!bookmark) {
-      result.AppendError(llvm::toString(std::move(bookmark.takeError())));
-      result.SetStatus(eReturnStatusFailed);
-      return false;
-    }
-
-    const llvm::StringRef name = m_options.m_tracepoint_name;
-
-    if (Status error = thread.RenameTracingBookmark(location, name);
+    if (Status error = thread.RenameTracingBookmark(bookmark_id, name);
         error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark rename failed: {0}",
                                     error.AsCString());
@@ -2779,10 +2789,17 @@ protected:
       return false;
     }
 
+    llvm::Expected<const Thread::TracingBookmark &> bookmark =
+        thread.GetTracingBookmark(bookmark_id);
+    if (!bookmark) {
+      result.AppendError(llvm::toString(std::move(bookmark.takeError())));
+      result.SetStatus(eReturnStatusFailed);
+      return false;
+    }
+
     Stream &stream = result.GetOutputStream();
     stream.PutCString("Renamed ");
     bookmark->GetDescription(stream, eDescriptionLevelBrief);
-
     result.SetStatus(eReturnStatusSuccessFinishNoResult);
     return true;
   }
@@ -2806,26 +2823,25 @@ public:
     ~CommandOptions() override = default;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
-      m_source_tracepoint_id.reset();
-      m_destination_tracepoint_id.reset();
+      m_bookmark_id.reset();
+      m_tracepoint_id.reset();
     }
 
     Status SetOptionValue(uint32_t option_idx, llvm::StringRef option_arg,
                           ExecutionContext *execution_context) override {
       const int short_option = m_getopt_table[option_idx].val;
       switch (short_option) {
-      case 's':
-        m_source_tracepoint_id.emplace();
-        if (option_arg.getAsInteger(0, *m_source_tracepoint_id)) {
-          m_source_tracepoint_id.reset();
-          return Status("Invalid source tracepoint ID: '%s'.",
-                        option_arg.str().c_str());
+      case 'b':
+        m_bookmark_id.emplace();
+        if (option_arg.getAsInteger(0, *m_bookmark_id)) {
+          m_bookmark_id.reset();
+          return Status("Invalid bookmark ID: '%s'.", option_arg.str().c_str());
         }
         return Status();
-      case 'd':
-        m_destination_tracepoint_id.emplace();
-        if (option_arg.getAsInteger(0, *m_destination_tracepoint_id)) {
-          m_destination_tracepoint_id.reset();
+      case 't':
+        m_tracepoint_id.emplace();
+        if (option_arg.getAsInteger(0, *m_tracepoint_id)) {
+          m_tracepoint_id.reset();
           return Status("Invalid destination tracepoint ID: '%s'.",
                         option_arg.str().c_str());
         }
@@ -2839,14 +2855,14 @@ public:
       return llvm::makeArrayRef(g_thread_tracing_bookmark_move_options);
     }
 
-    llvm::Optional<Thread::TracepointID> m_source_tracepoint_id;
-    llvm::Optional<Thread::TracepointID> m_destination_tracepoint_id;
+    llvm::Optional<Thread::TracingBookmarkID> m_bookmark_id;
+    llvm::Optional<Thread::TracepointID> m_tracepoint_id;
   };
 
   CommandObjectThreadTracingBookmarkMove(CommandInterpreter &interpreter)
       : CommandObjectThreadRecordReplay(interpreter, "move",
-          "Move the bookmark marking the provided tracepoint to another "
-          "location.", "bookmark move"), m_options() {}
+          "Move the bookmark with the provided ID to the given tracepoint.",
+          "bookmark move"), m_options() {}
 
   ~CommandObjectThreadTracingBookmarkMove() override = default;
 
@@ -2861,20 +2877,12 @@ protected:
     }
 
     Thread &thread = *m_exe_ctx.GetThreadPtr();
-    const Thread::TracepointID source =
-        ExtractTracepointID(m_options.m_source_tracepoint_id);
-    const Thread::TracepointID destination =
-        ExtractTracepointID(m_options.m_destination_tracepoint_id);
+    const Thread::TracepointID bookmark_id =
+        ExtractTracingBookmarkID(m_options.m_bookmark_id);
+    const Thread::TracepointID tracepoint_id =
+        ExtractTracepointID(m_options.m_tracepoint_id);
 
-    llvm::Expected<const Thread::TracingBookmark &> bookmark =
-        thread.GetTracingBookmark(source);
-    if (!bookmark) {
-      result.AppendError(llvm::toString(std::move(bookmark.takeError())));
-      result.SetStatus(eReturnStatusFailed);
-      return false;
-    }
-
-    if (Status error = thread.MoveTracingBookmark(source, destination);
+    if (Status error = thread.MoveTracingBookmark(bookmark_id, tracepoint_id);
         error.Fail()) {
       result.AppendErrorWithFormatv("Bookmark move failed: {0}",
                                     error.AsCString());
@@ -2882,16 +2890,21 @@ protected:
       return false;
     }
 
-    if (bookmark = thread.GetTracingBookmark(destination); bookmark) {
-      Stream &stream = result.GetOutputStream();
-      stream.Format("Moved bookmark to tracepoint {0}: {1}",
-                    bookmark->GetLocation(), bookmark->GetFormattedName());
-      stream.EOL();
-      result.SetStatus(eReturnStatusSuccessFinishNoResult);
-      return true;
-    } else {
-      llvm_unreachable("Bookmark has just been moved to destination!");
+    llvm::Expected<const Thread::TracingBookmark &> bookmark =
+        thread.GetTracingBookmark(bookmark_id);
+    if (!bookmark) {
+      result.AppendError(llvm::toString(std::move(bookmark.takeError())));
+      result.SetStatus(eReturnStatusFailed);
+      return false;
     }
+
+    Stream &stream = result.GetOutputStream();
+    stream.Format("Moved bookmark to tracepoint {0}: {1}",
+                  bookmark->GetMarkedTracepointID(),
+                  bookmark->GetFormattedName());
+    stream.EOL();
+    result.SetStatus(eReturnStatusSuccessFinishNoResult);
+    return true;
   }
 
   CommandOptions m_options;

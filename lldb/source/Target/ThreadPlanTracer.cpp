@@ -1034,40 +1034,59 @@ void ThreadPlanInstructionTracer::FormatError(llvm::StringRef format,
 
 #pragma mark Managing Bookmarks
 
-Status
-ThreadPlanInstructionTracer::CreateBookmark(Thread::TracepointID location,
+llvm::Expected<Thread::TracingBookmarkID>
+ThreadPlanInstructionTracer::CreateBookmark(Thread::TracepointID tracepoint_id,
                                             llvm::StringRef name) {
-  if (location >= m_timeline.size()) {
-    return Status("Invalid tracepoint ID.");
+  constexpr auto getUniqueBookmarkID = []() {
+    static Thread::TracingBookmarkID unique_bookmark_id = 0;
+    return unique_bookmark_id++;
+  };
+
+  if (tracepoint_id >= m_timeline.size()) {
+    return MakeError("Invalid tracepoint ID.");
   }
-  if (m_bookmarks.find(location) != m_bookmarks.end()) {
-    return Status("A bookmark already exists at this location.");
+
+  llvm::Expected<const Thread::TracingBookmark &> bookmark =
+      GetBookmarkAtTracepoint(tracepoint_id);
+  if (bookmark) {
+    return MakeError("A bookmark already exists at this tracepoint.");
   }
-  const addr_t pc = GetRecordedPCForStackFrame(m_timeline[location]);
-  m_bookmarks.emplace(location, Thread::TracingBookmark(m_thread, location,
-                                                        name, pc));
-  return Status();
+  llvm::consumeError(std::move(bookmark.takeError()));
+
+  const addr_t pc = GetRecordedPCForStackFrame(m_timeline[tracepoint_id]);
+  const Thread::TracingBookmarkID bm_id = getUniqueBookmarkID();
+  m_bookmarks.emplace(bm_id, Thread::TracingBookmark(m_thread, bm_id,
+                                                     tracepoint_id, name, pc));
+  return bm_id;
 }
 
-Status
-ThreadPlanInstructionTracer::DeleteBookmark(Thread::TracepointID location) {
-  if (location >= m_timeline.size()) {
-    return Status("Invalid tracepoint ID.");
-  }
-  return (m_bookmarks.erase(location) == 0)
-             ? Status("A bookmark does not exist at this location.")
-             : Status();
+Status ThreadPlanInstructionTracer::DeleteBookmark(
+    Thread::TracingBookmarkID bookmark_id) {
+  return (m_bookmarks.erase(bookmark_id) == 0) ? Status("Invalid bookmark ID.")
+                                               : Status();
 }
 
 llvm::Expected<const Thread::TracingBookmark &>
-ThreadPlanInstructionTracer::GetBookmark(Thread::TracepointID location) const {
-  if (location >= m_timeline.size()) {
-    return MakeError("Invalid tracepoint ID.");
-  }
-  if (auto iter = m_bookmarks.find(location); iter != m_bookmarks.end()) {
+ThreadPlanInstructionTracer::GetBookmark(
+    Thread::TracingBookmarkID boookmark_id) const {
+  if (auto iter = m_bookmarks.find(boookmark_id); iter != m_bookmarks.end()) {
     return std::get<Thread::TracingBookmark>(*iter);
   }
-  return MakeError("A bookmark does not exist at this location.");
+  return MakeError("Invalid bookmark ID.");
+}
+
+llvm::Expected<const Thread::TracingBookmark &>
+ThreadPlanInstructionTracer::GetBookmarkAtTracepoint(
+    Thread::TracepointID tracepoint_id) const {
+  const auto bookmark = std::find_if(m_bookmarks.cbegin(), m_bookmarks.cend(),
+                                     [&](const auto &bookmark_pair) {
+    const auto &bookmark = std::get<Thread::TracingBookmark>(bookmark_pair);
+    return bookmark.GetMarkedTracepointID() == tracepoint_id;
+  });
+  if (bookmark == m_bookmarks.end()) {
+    return MakeError("There is no bookmark at this tracepoint.");
+  }
+  return std::get<Thread::TracingBookmark>(*bookmark);
 }
 
 Thread::ΤracingBookmarkList
@@ -1080,53 +1099,46 @@ ThreadPlanInstructionTracer::GetAllBookmarks() const {
   std::sort(bookmarks.begin(), bookmarks.end(),
             [](const Thread::TracingBookmark &first,
                const Thread::TracingBookmark &second) {
-    return first.GetLocation() < second.GetLocation();
+    return first.GetMarkedTracepointID() < second.GetMarkedTracepointID();
   });
   return bookmarks;
 }
 
-Status
-ThreadPlanInstructionTracer::JumpToBookmark(Thread::TracepointID location) {
-  if (m_bookmarks.find(location) == m_bookmarks.end()) {
-    return Status("A bookmark does not exist at this location.");
+Status ThreadPlanInstructionTracer::JumpToBookmark(
+    Thread::TracingBookmarkID boookmark_id) {
+  llvm::Expected<const Thread::TracingBookmark &> bookmark =
+      GetBookmark(boookmark_id);
+  if (!bookmark) {
+    return Status("Invalid bookmark ID.");
   }
-  return JumpToTracepoint(location);
+  return JumpToTracepoint(bookmark->GetMarkedTracepointID());
 }
 
-Status
-ThreadPlanInstructionTracer::RenameBookmark(Thread::TracepointID location,
-                                            llvm::StringRef name) {
-  if (location >= m_timeline.size()) {
-    return Status("Invalid tracepoint ID.");
-  }
-  if (auto iter = m_bookmarks.find(location); iter != m_bookmarks.end()) {
+Status ThreadPlanInstructionTracer::RenameBookmark(
+    Thread::TracingBookmarkID boookmark_id, llvm::StringRef name) {
+  if (auto iter = m_bookmarks.find(boookmark_id); iter != m_bookmarks.end()) {
     std::get<Thread::TracingBookmark>(*iter).SetName(name);
     return Status();
   }
-  return Status("A bookmark does not exist at this location.");
+  return Status("Invalid bookmark ID.");
 }
 
 Status ThreadPlanInstructionTracer::MoveBookmark(
-    Thread::TracepointID old_location, Thread::TracepointID new_location) {
-  if (old_location >= m_timeline.size()) {
-    return Status("Invalid source tracepoint ID.");
+    Thread::TracingBookmarkID boookmark_id,
+    Thread::TracepointID new_tracepoint_id) {
+  if (new_tracepoint_id >= m_timeline.size()) {
+    return Status("Invalid tracepoint ID.");
   }
-  if (new_location >= m_timeline.size()) {
-    return Status("Invalid destination tracepoint ID.");
+  if (m_bookmarks.find(new_tracepoint_id) != m_bookmarks.end()) {
+    return Status("A bookmark already exists at the destination tracepoint.");
   }
-  if (old_location == new_location) {
-    return Status("Destination tracepoint must differ from the source.");
-  }
-  if (m_bookmarks.find(new_location) != m_bookmarks.end()) {
-    return Status("A bookmark already exists at the destination location.");
-  }
-  if (auto iter = m_bookmarks.find(old_location); iter != m_bookmarks.end()) {
-    CreateBookmark(new_location,
-                   std::get<Thread::TracingBookmark>(*iter).GetName());
-    DeleteBookmark(old_location);
+  if (auto iter = m_bookmarks.find(boookmark_id); iter != m_bookmarks.end()) {
+    const addr_t pc = GetRecordedPCForStackFrame(m_timeline[new_tracepoint_id]);
+    std::get<Thread::TracingBookmark>(*iter).
+        SetMarkedTracepointID(new_tracepoint_id, pc);
     return Status();
   }
-  return Status("A bookmark does not exist at this location.");
+  return Status("Invalid bookmark ID.");
 }
 
 #pragma mark Examining Recorded History
@@ -1184,10 +1196,6 @@ Status ThreadPlanInstructionTracer::CollectPastWriteLocations(
   if (GetState() == State::eDisabled) {
     return Status("Tracing is disabled.");
   }
-  if (m_current_tracepoint == Thread::InvalidTracepointID ||
-      m_current_tracepoint == 0) {
-    return Status();
-  }
 
   const auto timeline_begin = m_timeline.rend();
   const auto current_tracepoint = timeline_begin - m_current_tracepoint - 1;
@@ -1203,9 +1211,6 @@ Status ThreadPlanInstructionTracer::CollectFutureWriteLocations(
     TracepointCallback collector) {
   if (GetState() == State::eDisabled) {
     return Status("Tracing is disabled.");
-  }
-  if (m_current_tracepoint == Thread::InvalidTracepointID) {
-    return Status();
   }
 
   const auto current_tracepoint = m_timeline.begin() + m_current_tracepoint;

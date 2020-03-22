@@ -938,7 +938,7 @@ let Command = "thread replay until line" in {
 }
 
 let Command = "thread tracing jump" in {
-  def thread_tracing_bookmark_jump_tracepoint :
+  def thread_tracing_jump_tracepoint :
     Option<"tracepoint-id", "t">, Arg<"TracepointID">, Required,
     Desc<"The ID of the destination tracepoint.">;
 }
@@ -959,43 +959,43 @@ let Command = "thread tracing bookmark create" in {
     Option<"tracepoint-id", "t">, Arg<"TracepointID">,
     Desc<"The ID of the tracepoint to mark with the bookmark.">;
   def thread_tracing_bookmark_create_name:
-    Option<"name", "n">, Arg<"TracepointName">,
+    Option<"name", "n">, Arg<"TracingBookmarkName">,
     Desc<"The name of the bookmark.">;
 }
 
 let Command = "thread tracing bookmark delete" in {
-  def thread_tracing_bookmark_delete_tracepoint :
-    Option<"tracepoint-id", "t">, Arg<"TracepointID">, Required,
-    Desc<"The ID of the tracepoint marked by the bookmark to delete.">;
+  def thread_tracing_bookmark_delete_id :
+    Option<"bookmark-id", "b">, Arg<"TracingBookmarkID">, Required,
+    Desc<"The ID of the bookmark to delete.">;
 }
 
 let Command = "thread tracing bookmark list" in {
-  def thread_tracing_bookmark_list_tracepoint :
-    Option<"tracepoint-id", "t">, Arg<"TracepointID">,
-    Desc<"The ID of the tracepoint marked by the bookmark to list.">;
+  def thread_tracing_bookmark_list_id :
+    Option<"bookmark-id", "b">, Arg<"TracingBookmarkID">,
+    Desc<"The ID of the bookmark to list.">;
 }
 
 let Command = "thread tracing bookmark jump" in {
-  def thread_tracing_jump_tracepoint :
-    Option<"tracepoint-id", "t">, Arg<"TracepointID">, Required,
-    Desc<"The ID of the tracepoint marked by the bookmark to jump to.">;
+  def thread_tracing_jump_id :
+    Option<"bookmark-id", "b">, Arg<"TracingBookmarkID">, Required,
+    Desc<"The ID of the bookmark to jump to.">;
 }
 
 let Command = "thread tracing bookmark rename" in {
-  def thread_tracing_bookmark_rename_tracepoint :
-    Option<"tracepoint-id", "t">, Arg<"TracepointID">,
-    Desc<"The ID of the tracepoint marked by the bookmark to rename.">;
+  def thread_tracing_bookmark_rename_id :
+    Option<"bookmark-id", "b">, Arg<"TracingBookmarkID">, Required,
+    Desc<"The ID of the bookmark to rename.">;
   def thread_tracing_bookmark_rename_name:
-    Option<"name", "n">, Arg<"TracepointName">, Required,
+    Option<"name", "n">, Arg<"TracingBookmarkName">, Required,
     Desc<"The new name of the bookmark.">;
 }
 
 let Command = "thread tracing bookmark move" in {
-  def thread_tracing_bookmark_move_source_tracepoint :
-    Option<"source-tracepoint-id", "s">, Arg<"TracepointID">, Required,
-    Desc<"The ID of the tracepoint currently marked by the bookmark to move.">;
-  def thread_tracing_bookmark_move_destination_tracepoint:
-    Option<"destination-tracepoint-id", "d">, Arg<"TracepointID">, Required,
+  def thread_tracing_bookmark_move_id :
+    Option<"bookmark-id", "b">, Arg<"TracingBookmarkID">, Required,
+    Desc<"The ID of the bookmark to move.">;
+  def thread_tracing_bookmark_move_tracepoint:
+    Option<"tracepoint-id", "t">, Arg<"TracepointID">, Required,
     Desc<"The ID of the tracepoint to be marked by the bookmark.">;
 }
 

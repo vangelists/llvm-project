@@ -380,40 +380,51 @@ public:
                                        std::size_t num_locations,
                                        lldb::TracedWriteTiming write_timing);
 
-  /// Creates a bookmark at the requested location in recorded history.
+  /// Creates a bookmark marking the tracepoint with the provided ID.
   ///
-  /// \param[in] location
-  ///     The location in recorded history to be marked by the bookmark.
+  /// \param[in] tracepoint_id
+  ///     The ID of the tracepoint to be marked by the bookmark.
   ///
   /// \param[in] name
   ///     The name of the bookmark.
   ///
   /// \return
-  ///     An error value, in case bookmark creation fails.
+  ///     The unique ID of the newly created bookmark, if successful.
   ///
-  Status CreateBookmark(Thread::TracepointID location,
-                        llvm::StringRef name = {});
+  llvm::Expected<Thread::TracingBookmarkID>
+  CreateBookmark(Thread::TracepointID tracepoint_id, llvm::StringRef name = {});
 
-  /// Deletes the bookmark marking the requested location.
+  /// Deletes the bookmark with the provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to delete.
   ///
   /// \return
   ///     An error value, in case bookmark deletion fails.
   ///
-  Status DeleteBookmark(Thread::TracepointID location);
+  Status DeleteBookmark(Thread::TracingBookmarkID boookmark_id);
 
-  /// Returns the bookmark marking the requested location.
+  /// Returns the bookmark with the provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location in recorded history marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to return.
   ///
   /// \return
-  ///     The bookmark marking the requested location, if any.
+  ///     The bookmark with the provided ID, if any.
   ///
   llvm::Expected<const Thread::TracingBookmark &>
-  GetBookmark(Thread::TracepointID location) const;
+  GetBookmark(Thread::TracingBookmarkID boookmark_id) const;
+
+  /// Returns the bookmark marking the tracepoint with the provided ID.
+  ///
+  /// \param[in] tracepoint_id
+  ///     The ID of the tracepoint marked by the bookmark to search.
+  ///
+  /// \return
+  ///     The bookmark marking the tracepoint with the provided ID, if any.
+  ///
+  llvm::Expected<const Thread::TracingBookmark &>
+  GetBookmarkAtTracepoint(Thread::TracepointID tracepoint_id) const;
 
   /// Returns a collection with references to all bookmarks.
   ///
@@ -422,20 +433,21 @@ public:
   ///
   Thread::ΤracingBookmarkList GetAllBookmarks() const;
 
-  /// Restores the thread's state to the point in time marked by the bookmark.
+  /// Restores the thread to the tracepoint marked by the bookmark with the
+  /// provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location within recorded history marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the destination bookmark.
   ///
   /// \return
-  ///     An error value, in case thread state restoration fails.
+  ///     An error value, in case the jump fails.
   ///
-  Status JumpToBookmark(Thread::TracepointID location);
+  Status JumpToBookmark(Thread::TracingBookmarkID boookmark_id);
 
-  /// Renames the bookmark marking the given location.
+  /// Renames the bookmark with the provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location in recorded history marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to rename.
   ///
   /// \param[in] name
   ///     The new name of the bookmark.
@@ -443,21 +455,22 @@ public:
   /// \return
   ///     An error value, in case bookmark renaming fails.
   ///
-  Status RenameBookmark(Thread::TracepointID location, llvm::StringRef name);
+  Status
+  RenameBookmark(Thread::TracingBookmarkID boookmark_id, llvm::StringRef name);
 
-  /// Moves the bookmark from the current location to a new one.
+  /// Moves the bookmark with the provided unique ID to the given tracepoint.
   ///
-  /// \param[in] old_location
-  ///     The location in recorded history currently marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to move.
   ///
-  /// \param[in] new_location
-  ///     The location in recorded history to be marked by the bookmark.
+  /// \param[in] new_tracepoint_id
+  ///     The ID of the tracepoint to be marked by the bookmark.
   ///
   /// \return
   ///     An error value, in case bookmark moving fails.
   ///
-  Status MoveBookmark(Thread::TracepointID old_location,
-                      Thread::TracepointID new_location);
+  Status MoveBookmark(Thread::TracingBookmarkID boookmark_id,
+                      Thread::TracepointID new_tracepoint_id);
 
   /// Restores the register and variable values of the stack frame with the
   /// provided index.
@@ -658,8 +671,8 @@ private:
   };
 
   using Timeline = std::vector<Tracepoint>;
-  using Bookmarks = std::unordered_map<Thread::TracepointID,
-                                       Thread::TracingBookmark>;
+  using Bookmarks = std::map<Thread::TracingBookmarkID,
+                             Thread::TracingBookmark>;
   using TracepointCallback = std::function<Status(Tracepoint &)>;
 
   using WriteLocations = std::map<Thread::TracepointID, std::string>;

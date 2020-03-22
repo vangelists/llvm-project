@@ -180,29 +180,29 @@ However, there is still lots of room for improvement and I will continue to look
 
 <details><summary>Managing Bookmarks</summary>
 
-* Create a bookmark at the current or provided tracepoint, if any, with an optional name:
+* Create a bookmark at the current or provided tracepoint with an optional name:
 
-    `thread tracing bookmark create [-t <tracepoint-id>] [-n <tracepoint-name>]`
+    `thread tracing bookmark create [-n <bookmark-name>] [-t <tracepoint-id>]`
 
-* Delete the bookmark marking the provided tracepoint:
+* Delete a bookmark:
 
-    `thread tracing bookmark delete -t <tracepoint-id>`
+    `thread tracing bookmark delete -b <bookmark-id>`
 
-* Jump to the tracepoint marked by the bookmark:
+* Jump to a bookmark:
 
-    `thread tracing bookmark jump -t <tracepoint-id>`
+    `thread tracing bookmark jump -b <bookmark-id>`
 
-* List either all bookmarks or the bookmark marking the provided tracepoint, if any:
+* List either all bookmarks or the bookmark with the provided ID:
 
-    `thread tracing bookmark list [-t <tracepoint-id>]`
+    `thread tracing bookmark list [-b <bookmark-id>]`
 
-* Rename the bookmark marking the current or the provided tracepoint, if any:
+* Rename a bookmark:
 
-    `thread tracing bookmark rename [-t <tracepoint-id>] -n <tracepoint-name>`
+    `thread tracing bookmark rename -b <bookmark-id> -n <bookmark-name>`
 
-* Move the bookmark marking the provided tracepoint (source) to another location (destination):
+* Move a bookmark to another tracepoint:
 
-    `thread tracing bookmark move -s <tracepoint-id> -d <tracepoint-id>`
+    `thread tracing bookmark move -b <bookmark-id> -t <tracepoint-id>`
 
 </details>
 

@@ -74,11 +74,18 @@ public:
   /// individual points in time within the recorded thread execution history.
   using TracepointID = std::size_t;
 
+  /// Unique ID type for tracing bookmarks.
+  using TracingBookmarkID = std::size_t;
+
   /// Denotes an invalid tracepoint ID.
   static constexpr auto InvalidTracepointID =
       std::numeric_limits<TracepointID>::max();
 
-  /// \class Bookmark
+  /// Denotes an invalid tracing bookmark ID.
+  static constexpr auto InvalidTracingBookmarkID =
+      std::numeric_limits<TracingBookmarkID>::max();
+
+  /// \class TracingBookmark
   ///
   /// Enables the user to mark points of interest within the recorded history
   /// for easier lookup and step back or replay among those points.
@@ -93,7 +100,10 @@ public:
     /// \param[in] thread
     ///     The thread whose tracer manages this bookmark.
     ///
-    /// \param[in] location
+    /// \param[in] id
+    ///     The unique ID of this bookmark.
+    ///
+    /// \param[in] tracepoint_id
     ///     The ID of the tracepoint marked by this bookmark.
     ///
     /// \param[in] name
@@ -102,7 +112,8 @@ public:
     /// \param[in] pc
     ///     The value of PC at the tracepoint marked by this bookmark.
     ///
-    TracingBookmark(Thread &thread, TracepointID location, llvm::StringRef name,
+    TracingBookmark(Thread &thread, TracingBookmarkID id,
+                    TracepointID tracepoint_id, llvm::StringRef name,
                     lldb::addr_t pc);
 
     /// Destructs this `TracingBookmark` object.
@@ -112,6 +123,13 @@ public:
     /// Enable move construction.
     ///
     TracingBookmark(TracingBookmark &&);
+
+    /// Returns the ID of this bookmark.
+    ///
+    /// \return
+    ///     The ID of this bookmark.
+    ///
+    TracingBookmarkID GetID() const;
 
     /// Returns the name of this bookmark.
     ///
@@ -127,12 +145,12 @@ public:
     ///
     std::string GetFormattedName() const;
 
-    /// Returns the location in recorded history marked by this bookmark.
+    /// Returns the ID of the tracepoint marked by this bookmark.
     ///
     /// \return
-    ///     The location in recorded history marked by this bookmark.
+    ///     The ID of the tracepoint marked by this bookmark.
     ///
-    TracepointID GetLocation() const;
+    TracepointID GetMarkedTracepointID() const;
 
     /// Returns the value of PC at the tracepoint marked by this bookmark.
     ///
@@ -161,19 +179,20 @@ public:
     ///
     void SetName(llvm::StringRef name);
 
-    /// Changes the location marked by this bookmark.
+    /// Changes the tracepoint marked by this bookmark.
     ///
-    /// \param[in] location
-    ///     The location in recorded history to be marked by this bookmark.
+    /// \param[in] tracepoint_id
+    ///     The ID of the tracepoint to be marked by this bookmark.
     ///
     /// \param[in] pc
-    ///     The value of PC at the new location.
+    ///     The value of PC at the new tracepoint.
     ///
-    void SetLocation(TracepointID location, lldb::addr_t pc);
+    void SetMarkedTracepointID(TracepointID tracepoint_id, lldb::addr_t pc);
 
   private:
+    const TracingBookmarkID m_id; ///< The unique ID of this bookmark.
     Thread &m_thread; ///< The thread whose tracer manages this bookmark.
-    TracepointID m_location; ///< The ID of the bookmarked tracepoint.
+    TracepointID m_tracepoint_id; ///< The ID of the bookmarked tracepoint.
     std::string m_name; ///< The name of this bookmark.
     Address m_pc; ///< The value of PC at the bookmarked tracepoint.
 
@@ -863,37 +882,47 @@ public:
                                        std::size_t num_locations,
                                        lldb::TracedWriteTiming write_timing);
 
-  /// Creates a bookmark at the requested location in recorded history.
+  /// Creates a bookmark marking the tracepoint with the provided ID.
   ///
-  /// \param[in] location
-  ///     The location in recorded history to be marked by the bookmark.
+  /// \param[in] tracepoint_id
+  ///     The ID of the tracepoint to be marked by the bookmark.
   ///
   /// \param[in] name
   ///     The name of the bookmark.
   ///
   /// \return
-  ///     An error value, in case bookmark creation fails.
-  Status CreateTracingBookmark(TracepointID location,
-                               llvm::StringRef name = {});
+  ///     The unique ID of the newly created bookmark, if successful.
+  llvm::Expected<Thread::TracingBookmarkID>
+  CreateTracingBookmark(TracepointID tracepoint_id, llvm::StringRef name = {});
 
-  /// Deletes the bookmark marking the requested location.
+  /// Deletes the bookmark with the provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to delete.
   ///
   /// \return
   ///     An error value, in case bookmark deletion fails.
-  Status DeleteTracingBookmark(TracepointID location);
+  Status DeleteTracingBookmark(TracingBookmarkID boookmark_id);
 
-  /// Returns the bookmark marking the requested location.
+  /// Returns the bookmark with the provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location in recorded history marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to return.
   ///
   /// \return
-  ///     The bookmark marking the requested location, if any.
+  ///     The bookmark with the provided ID, if any.
   llvm::Expected<const TracingBookmark &>
-  GetTracingBookmark(TracepointID location);
+  GetTracingBookmark(TracingBookmarkID boookmark_id);
+
+  /// Returns the bookmark marking the tracepoint with the provided ID.
+  ///
+  /// \param[in] tracepoint_id
+  ///     The ID of the tracepoint marked by the bookmark to search.
+  ///
+  /// \return
+  ///     The bookmark marking the tracepoint with the provided ID, if any.
+  llvm::Expected<const TracingBookmark &>
+  GetTracingBookmarkAtTracepoint(TracepointID tracepoint_id);
 
   /// Returns a collection with references to all bookmarks.
   ///
@@ -901,39 +930,41 @@ public:
   ///     A collection with references to all bookmarks.
   ΤracingBookmarkList GetAllTracingBookmarks();
 
-  /// Restores the thread's state to the point in time marked by the bookmark.
+  /// Restores the thread to the tracepoint marked by the bookmark with the
+  /// provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location within recorded history marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the destination bookmark.
   ///
   /// \return
-  ///     An error value, in case thread state restoration fails.
-  Status JumpToTracingBookmark(TracepointID location);
+  ///     An error value, in case the jump fails.
+  Status JumpToTracingBookmark(TracingBookmarkID boookmark_id);
 
-  /// Renames the bookmark marking the given location.
+  /// Renames the bookmark with the provided unique ID.
   ///
-  /// \param[in] location
-  ///     The location in recorded history marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to rename.
   ///
   /// \param[in] name
   ///     The new name of the bookmark.
   ///
   /// \return
   ///     An error value, in case bookmark renaming fails.
-  Status RenameTracingBookmark(TracepointID location, llvm::StringRef name);
+  Status RenameTracingBookmark(TracingBookmarkID boookmark_id,
+                               llvm::StringRef name);
 
-  /// Moves the bookmark from the current location to a new one.
+  /// Moves the bookmark with the provided unique ID to the given tracepoint.
   ///
-  /// \param[in] old_location
-  ///     The location in recorded history currently marked by the bookmark.
+  /// \param[in] boookmark_id
+  ///     The unique ID of the bookmark to move.
   ///
-  /// \param[in] new_location
-  ///     The location in recorded history to be marked by the bookmark.
+  /// \param[in] new_tracepoint_id
+  ///     The ID of the tracepoint to be marked by the bookmark.
   ///
   /// \return
   ///     An error value, in case bookmark moving fails.
-  Status
-  MoveTracingBookmark(TracepointID old_location, TracepointID new_location);
+  Status MoveTracingBookmark(TracingBookmarkID boookmark_id,
+                             TracepointID new_tracepoint_id);
 
   /// Retrieves the per-thread data area.
   /// Most OSs maintain a per-thread pointer (e.g. the FS register on

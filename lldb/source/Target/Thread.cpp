@@ -234,15 +234,20 @@ Thread::ThreadEventData::GetStackFrameFromEvent(const Event *event_ptr) {
 
 // TracingBookmark class
 
-Thread::TracingBookmark::TracingBookmark(Thread &thread, TracepointID location,
+Thread::TracingBookmark::TracingBookmark(Thread &thread, TracingBookmarkID id,
+                                         TracepointID tracepoint_id,
                                          llvm::StringRef name, addr_t pc)
-    : m_thread(thread), m_name(name) {
-  SetLocation(location, pc);
+    : m_thread(thread), m_id(id), m_name(name) {
+  SetMarkedTracepointID(tracepoint_id, pc);
 }
 
 Thread::TracingBookmark::TracingBookmark(TracingBookmark &&) = default;
 
 Thread::TracingBookmark::~TracingBookmark() = default;
+
+Thread::TracepointID Thread::TracingBookmark::GetID() const {
+  return m_id;
+}
 
 llvm::StringRef Thread::TracingBookmark::GetName() const {
   return m_name;
@@ -252,8 +257,8 @@ std::string Thread::TracingBookmark::GetFormattedName() const {
   return !m_name.empty() ? "\"" + m_name + "\"" : "<anonymous>";
 }
 
-Thread::TracepointID Thread::TracingBookmark::GetLocation() const {
-  return m_location;
+Thread::TracepointID Thread::TracingBookmark::GetMarkedTracepointID() const {
+  return m_tracepoint_id;
 }
 
 addr_t Thread::TracingBookmark::GetPC() const {
@@ -265,7 +270,7 @@ void Thread::TracingBookmark::GetDescription(
   switch (level) {
   case lldb::eDescriptionLevelBrief:
   case lldb::eDescriptionLevelInitial:
-    stream.Format("bookmark at tracepoint {0}: {1}", m_location,
+    stream.Format("bookmark at tracepoint {0}: {1}", m_tracepoint_id,
                   GetFormattedName());
     break;
   case lldb::eDescriptionLevelFull:
@@ -273,7 +278,8 @@ void Thread::TracingBookmark::GetDescription(
     SymbolContext sc;
     m_pc.CalculateSymbolContext(&sc);
     ExecutionContextScope *exe_scope = m_thread.CalculateProcess().get();
-    stream.Format("{0}: {1}\n  └─ ", m_location, GetFormattedName());
+    stream.Format("{0}: {1}\n  └─ Tracepoint {2}: ", m_id, GetFormattedName(),
+                  m_tracepoint_id);
     sc.DumpStopContext(&stream, exe_scope, m_pc, false, true, false, true,
                        true);
     stream.PutCString(", address = ");
@@ -287,8 +293,9 @@ void Thread::TracingBookmark::SetName(llvm::StringRef name) {
   m_name = name;
 }
 
-void Thread::TracingBookmark::SetLocation(TracepointID location, addr_t pc) {
-  m_location = location;
+void Thread::TracingBookmark::SetMarkedTracepointID(TracepointID tracepoint_id,
+                                                    addr_t pc) {
+  m_tracepoint_id = tracepoint_id;
   m_pc.SetOpcodeLoadAddress(pc, m_thread.CalculateTarget().get());
 }
 
@@ -2482,37 +2489,42 @@ Status Thread::ListHeapAddressWriteLocations(Stream &stream,
       ListHeapAddressWriteLocations(stream, heap_addr, num_locs, write_timing);
 }
 
-Status
-Thread::CreateTracingBookmark(TracepointID location, llvm::StringRef name) {
-  return GetBasePlanInstructionTracer().CreateBookmark(location, name);
+llvm::Expected<Thread::TracingBookmarkID> Thread::CreateTracingBookmark(
+    TracepointID tracepoint_id, llvm::StringRef name) {
+  return GetBasePlanInstructionTracer().CreateBookmark(tracepoint_id, name);
 }
 
-Status Thread::DeleteTracingBookmark(TracepointID location) {
-  return GetBasePlanInstructionTracer().DeleteBookmark(location);
+Status Thread::DeleteTracingBookmark(TracingBookmarkID boookmark_id) {
+  return GetBasePlanInstructionTracer().DeleteBookmark(boookmark_id);
 }
 
 llvm::Expected<const Thread::TracingBookmark &>
-Thread::GetTracingBookmark(TracepointID location) {
-  return GetBasePlanInstructionTracer().GetBookmark(location);
+Thread::GetTracingBookmark(TracingBookmarkID boookmark_id) {
+  return GetBasePlanInstructionTracer().GetBookmark(boookmark_id);
+}
+
+llvm::Expected<const Thread::TracingBookmark &>
+Thread::GetTracingBookmarkAtTracepoint(TracepointID tracepoint_id) {
+  return GetBasePlanInstructionTracer().GetBookmarkAtTracepoint(tracepoint_id);
 }
 
 Thread::ΤracingBookmarkList Thread::GetAllTracingBookmarks() {
   return GetBasePlanInstructionTracer().GetAllBookmarks();
 }
 
-Status Thread::JumpToTracingBookmark(TracepointID location) {
-  return GetBasePlanInstructionTracer().JumpToBookmark(location);
+Status Thread::JumpToTracingBookmark(TracingBookmarkID boookmark_id) {
+  return GetBasePlanInstructionTracer().JumpToBookmark(boookmark_id);
 }
 
-Status
-Thread::RenameTracingBookmark(TracepointID location, llvm::StringRef name) {
-  return GetBasePlanInstructionTracer().RenameBookmark(location, name);
+Status Thread::RenameTracingBookmark(TracingBookmarkID boookmark_id,
+                                     llvm::StringRef name) {
+  return GetBasePlanInstructionTracer().RenameBookmark(boookmark_id, name);
 }
 
-Status Thread::MoveTracingBookmark(TracepointID old_location,
-                            TracepointID new_location) {
-  return GetBasePlanInstructionTracer().MoveBookmark(old_location,
-                                                     new_location);
+Status Thread::MoveTracingBookmark(TracingBookmarkID boookmark_id,
+                                   TracepointID new_tracepoint_id) {
+  return GetBasePlanInstructionTracer().MoveBookmark(boookmark_id,
+                                                     new_tracepoint_id);
 }
 
 ValueObjectSP Thread::GetCurrentException() {
