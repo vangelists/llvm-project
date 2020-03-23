@@ -674,6 +674,8 @@ private:
   using Bookmarks = std::map<Thread::TracingBookmarkID,
                              Thread::TracingBookmark>;
   using TracepointCallback = std::function<Status(Tracepoint &)>;
+  using SpecialFunctionHandler = std::function<void(void)>;
+  using SpecialFunctionHandlers = llvm::StringMap<SpecialFunctionHandler>;
 
   using WriteLocations = std::map<Thread::TracepointID, std::string>;
   using WriteLocationCollector = std::function<Status(Tracepoint &,
@@ -863,6 +865,14 @@ private:
   ///     The ID of the destination snapshot.
   ///
   void RedoHeapWritesUpTo(Thread::TracepointID destination);
+
+  /// Calls the handler of the given function, if the latter is registered as
+  /// one that needs special handling.
+  ///
+  /// \param[in] function_name
+  ///     The name of the function to handle.
+  ///
+  void HandleSpecialFunctionIfNeeded(llvm::StringRef function_name);
 
   /// Saves the contents of the heap region about to be overwritten by the given
   /// instruction, if any.
@@ -1055,6 +1065,17 @@ private:
   lldb::addr_t
   CalculateAddressFromOperand(const Instruction::Operand &operand) const;
 
+  /// Returns the value of the register with the given name.
+  ///
+  /// \param[in] register_name
+  ///     The name of the register.
+  ///
+  /// \return
+  ///     The value of the register with the given name, on success.
+  ///
+  uint64_t GetRegisterValueAsUInt64(ConstString register_name,
+                                    uint64_t fail_value = UINT64_MAX) const;
+
   /// Returns `true` if this tracer has been suspended for internal reasons,
   /// such as to avoid tracing a symbol.
   ///
@@ -1178,6 +1199,10 @@ private:
                    TracepointCallback &&initializer = {},
                    TracepointCallback &&past_limit = {});
 
+  /// Initializes the registry of special function handlers.
+  ///
+  void InitializeSpecialFunctionHandlers();
+
   /// Prints the given formatted message to the default logging stream using
   /// the prefix "error: " and a newline in the end.
   ///
@@ -1204,6 +1229,14 @@ private:
 
   Bookmarks m_bookmarks; ///< Holds the bookmarks to points of interest in the
                          ///< thread's recorded history.
+
+  SpecialFunctionHandlers m_special_function_handlers; ///< Registry of handlers
+                                                       ///< for calls that need
+                                                       ///< special handling,
+                                                       ///< e.g. system calls or
+                                                       ///< calls to known
+                                                       ///< memory manipulation
+                                                       ///< functions.
 
   std::vector<lldb::user_id_t> m_artificial_breakpoint_ids; ///< Breakpoints set
                                                             ///< after calls to

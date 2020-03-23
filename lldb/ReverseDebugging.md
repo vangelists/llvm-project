@@ -265,6 +265,8 @@ A snapshot of the thread's state and environment (registers, variables, heap) is
 
     Additionally, just like with registers and variables, modified heap regions are marked, thus allowing listing of modifications via the `thread tracing modification list` command.
 
+    Last but not least, heap modifications made by known functions whose execution cannot or should not be traced are also being tracked. Currently, these are the memory manipulation functions located in `<cstring>`, namely `memcpy()`, `memmove()` and `memset()`.
+
 - **Thread State**
 
     Besides the stack frames and associated data, information about the thread state is also captured. In particular, the current stop reason, since it is modified when the user steps backwards, replays one or more recorded instructions or a user expression is evaluated and thus needs to be restored when execution continues normally, and the list of completed thread plans, so that they won't be executed again when the thread resumes.
@@ -353,7 +355,7 @@ A number of other files have also been modified, albeit to a lesser extent. You 
 
 In no particular order:
 
-- [ ] Track modifications made by system calls and other known functions, e.g. `memcpy()`.
+- [ ] Track heap modifications made by system calls.
 - [ ] Add ability to jump directly to the previous or next point where a value was modified.
 - [ ] Handle reallocated heap regions.
 - [ ] Add support for watchpoints.

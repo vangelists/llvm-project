@@ -371,17 +371,27 @@ constexpr uint8_t i386_nop_opcodes[][max_i386_nop_opcode_size] {
 
 /// Holds a backup of an instruction opcode that was replaced with `NOP` and is
 /// pending restoration.
+///
 static struct {
+  /// Sets the original location of the saved opcode.
+  ///
   void SetLocation(addr_t address, std::size_t opcode_size) {
     this->address = address;
     this->opcode_size = opcode_size;
   }
 
+  /// Clears the saved opcode.
+  ///
   void Clear() {
     ::memset(opcode, 0, opcode_size);
     SetLocation(LLDB_INVALID_ADDRESS, 0);
   }
 
+  /// Returns `true` if there is a saved opcode pending restoration.
+  ///
+  /// \return
+  ///     `true` if there is a saved opcode pending restoration.
+  ///
   bool IsPendingRestoration() {
     return address != LLDB_INVALID_ADDRESS;
   }
@@ -885,21 +895,24 @@ ThreadPlanInstructionTracer::Tracepoint::operator=(Tracepoint &&) = default;
 
 ThreadPlanInstructionTracer::ThreadPlanInstructionTracer(Thread &thread)
   : ThreadPlanTracer(thread), m_target(nullptr), m_disassembler_sp(),
-    m_current_tracepoint(Thread::InvalidTracepointID),
-    m_artificial_breakpoint_ids(), m_stepped_while_suspended(false),
-    m_artificial_step(false), m_stepped_back(false), m_modified_heap(false),
+    m_current_tracepoint(Thread::InvalidTracepointID), m_bookmarks(),
+    m_special_function_handlers(), m_artificial_breakpoint_ids(),
+    m_stepped_while_suspended(false), m_artificial_step(false),
+    m_stepped_back(false), m_modified_heap(false),
     m_emulating_stack_frames(false) {
   ThreadPlanInstructionTracer::m_this = this;
+  InitializeSpecialFunctionHandlers();
 }
 
 ThreadPlanInstructionTracer::ThreadPlanInstructionTracer(Thread &thread,
                                                          StreamSP &stream_sp)
   : ThreadPlanTracer(thread, stream_sp), m_target(nullptr), m_disassembler_sp(),
-    m_current_tracepoint(Thread::InvalidTracepointID),
-    m_artificial_breakpoint_ids(), m_stepped_while_suspended(false),
-    m_artificial_step(false), m_stepped_back(false),
-    m_emulating_stack_frames(false) {
+    m_current_tracepoint(Thread::InvalidTracepointID), m_bookmarks(),
+    m_special_function_handlers(), m_artificial_breakpoint_ids(),
+    m_stepped_while_suspended(false), m_artificial_step(false),
+    m_stepped_back(false), m_emulating_stack_frames(false) {
   ThreadPlanInstructionTracer::m_this = this;
+  InitializeSpecialFunctionHandlers();
 }
 
 ThreadPlanInstructionTracer::~ThreadPlanInstructionTracer() {
@@ -1016,6 +1029,24 @@ bool ThreadPlanInstructionTracer::ShouldAcceptToken(TracingToken token) const {
 }
 
 #pragma mark Helper Methods
+
+void ThreadPlanInstructionTracer::InitializeSpecialFunctionHandlers() {
+  const auto handle_cstring_mem_funcs = [&]() {
+    const uint64_t destination = GetRegisterValueAsUInt64(ConstString("rdi"));
+    const uint64_t count = GetRegisterValueAsUInt64(ConstString("rdx"));
+    if (destination == UINT64_MAX || count == UINT64_MAX) {
+      return;
+    }
+    if (llvm::Optional<HeapData> heap_data = GetHeapData(destination, count);
+        heap_data) {
+      m_timeline[m_current_tracepoint].heap_data = std::move(heap_data);
+      m_modified_heap = true;
+    }
+  };
+  m_special_function_handlers.insert({"memcpy", handle_cstring_mem_funcs});
+  m_special_function_handlers.insert({"memmove", handle_cstring_mem_funcs});
+  m_special_function_handlers.insert({"memset", handle_cstring_mem_funcs});
+}
 
 bool ThreadPlanInstructionTracer::HasBeenSuspendedInternally() const {
   return GetState() == State::eSuspended &&
@@ -2149,24 +2180,25 @@ void ThreadPlanInstructionTracer::RestoreSnapshot(
 
 #pragma mark Logging
 
+uint64_t ThreadPlanInstructionTracer::GetRegisterValueAsUInt64(
+    ConstString register_name, uint64_t fail_value) const {
+  RegisterContext &register_context = *m_thread.GetRegisterContext();
+  const RegisterInfo *register_info = register_context.GetRegisterInfoByName(
+      register_name.GetStringRef());
+  if (register_info) {
+    RegisterValue register_value;
+    if (register_context.ReadRegister(register_info, register_value)) {
+      return register_value.GetAsUInt64(fail_value);
+    }
+  }
+  return fail_value;
+}
+
 lldb::addr_t ThreadPlanInstructionTracer::CalculateAddressFromOperand(
     const Instruction::Operand &operand) const {
   if (operand.m_type != Instruction::Operand::Type::Dereference) {
     return LLDB_INVALID_ADDRESS;
   }
-
-  const auto read_address_from_register = [&](ConstString register_name) {
-    RegisterContext &register_context = *m_thread.GetRegisterContext();
-    const RegisterInfo *register_info = register_context.GetRegisterInfoByName(
-        register_name.GetStringRef());
-    if (register_info) {
-      RegisterValue register_value;
-      if (register_context.ReadRegister(register_info, register_value)) {
-        return register_value.GetAsUInt64();
-      }
-    }
-    return LLDB_INVALID_ADDRESS;
-  };
 
   const Instruction::Operand &address_operand = operand.m_children[0];
 
@@ -2178,11 +2210,11 @@ lldb::addr_t ThreadPlanInstructionTracer::CalculateAddressFromOperand(
   case Instruction::Operand::Type::Immediate:
     return address_operand.m_immediate;
   case Instruction::Operand::Type::Register:
-    return read_address_from_register(address_operand.m_register);
+    return GetRegisterValueAsUInt64(address_operand.m_register);
   case Instruction::Operand::Type::Sum: {
     const Instruction::Operand &offset_operand = address_operand.m_children[0];
     const Instruction::Operand &base_operand = address_operand.m_children[1];
-    const addr_t base = read_address_from_register(base_operand.m_register);
+    const addr_t base = GetRegisterValueAsUInt64(base_operand.m_register);
     if (base == LLDB_INVALID_ADDRESS) {
       return LLDB_INVALID_ADDRESS;
     }
@@ -2316,6 +2348,15 @@ void ThreadPlanInstructionTracer::HandleCallTargetToAvoid(addr_t bp_addr) {
   }
 }
 
+void ThreadPlanInstructionTracer::HandleSpecialFunctionIfNeeded(
+    llvm::StringRef function_name) {
+  if (auto iter = m_special_function_handlers.find(function_name);
+      iter != m_special_function_handlers.end()) {
+    const SpecialFunctionHandler &handler = iter->getValue();
+    handler();
+  }
+}
+
 void ThreadPlanInstructionTracer::HandleCallInstruction(
     Instruction &call_inst, Instruction &inst_after_call) {
   const auto get_opcode_address = [&](const Instruction &instruction) {
@@ -2324,6 +2365,7 @@ void ThreadPlanInstructionTracer::HandleCallInstruction(
 
   const std::string call_target = GetDemangledCallTarget(m_thread, call_inst);
 
+  // Handle calls to known deallocation functions that should not be executed.
   if (m_thread.GetTracingJumpOverDeallocationFunctions() &&
       IsDeallocationFunction(call_target)) {
     const std::size_t call_opcode_size = call_inst.GetOpcode().GetByteSize();
@@ -2334,7 +2376,18 @@ void ThreadPlanInstructionTracer::HandleCallInstruction(
       FormatError("Failed to replace call to deallocation function: {0}",
                   error.AsCString());
     }
-  } else if (ShouldAvoidCallTarget(call_target)) {
+    return;
+  }
+
+  // Check if this a call to a function that needs special handling, e.g. a
+  // system call or a call to a known memory manipulation function.
+  //
+  // These functions can't or shall not be traced, but their side effects, such
+  // as modifications to the heap, must be tracked.
+  HandleSpecialFunctionIfNeeded(call_target);
+
+  // Finally, avoid tracing the called function, if applicable.
+  if (ShouldAvoidCallTarget(call_target)) {
     HandleCallTargetToAvoid(get_opcode_address(inst_after_call));
   }
 }
