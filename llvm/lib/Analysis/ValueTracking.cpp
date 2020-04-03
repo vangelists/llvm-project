@@ -168,13 +168,19 @@ static bool getShuffleDemandedElts(const ShuffleVectorInst *Shuf,
                                    APInt &DemandedLHS, APInt &DemandedRHS) {
   // The length of scalable vectors is unknown at compile time, thus we
   // cannot check their values
-  if (Shuf->getMask()->getType()->getVectorElementCount().Scalable)
+  if (Shuf->getType()->getVectorElementCount().Scalable)
     return false;
 
   int NumElts = Shuf->getOperand(0)->getType()->getVectorNumElements();
-  int NumMaskElts = Shuf->getMask()->getType()->getVectorNumElements();
+  int NumMaskElts = Shuf->getType()->getVectorNumElements();
   DemandedLHS = DemandedRHS = APInt::getNullValue(NumElts);
-
+  if (DemandedElts.isNullValue())
+    return true;
+  // Simple case of a shuffle with zeroinitializer.
+  if (all_of(Shuf->getShuffleMask(), [](int Elt) { return Elt == 0; })) {
+    DemandedLHS.setBit(0);
+    return true;
+  }
   for (int i = 0; i != NumMaskElts; ++i) {
     if (!DemandedElts[i])
       continue;
@@ -1737,7 +1743,12 @@ static void computeKnownBitsFromOperator(const Operator *I,
     }
     break;
   case Instruction::ShuffleVector: {
-    auto *Shuf = cast<ShuffleVectorInst>(I);
+    auto *Shuf = dyn_cast<ShuffleVectorInst>(I);
+    // FIXME: Do we need to handle ConstantExpr involving shufflevectors?
+    if (!Shuf) {
+      Known.resetAll();
+      return;
+    }
     // For undef elements, we don't know anything about the common state of
     // the shuffle result.
     APInt DemandedLHS, DemandedRHS;
@@ -1763,10 +1774,9 @@ static void computeKnownBitsFromOperator(const Operator *I,
     break;
   }
   case Instruction::InsertElement: {
-    auto *IEI = cast<InsertElementInst>(I);
-    Value *Vec = IEI->getOperand(0);
-    Value *Elt = IEI->getOperand(1);
-    auto *CIdx = dyn_cast<ConstantInt>(IEI->getOperand(2));
+    const Value *Vec = I->getOperand(0);
+    const Value *Elt = I->getOperand(1);
+    auto *CIdx = dyn_cast<ConstantInt>(I->getOperand(2));
     // Early out if the index is non-constant or out-of-range.
     unsigned NumElts = DemandedElts.getBitWidth();
     if (!CIdx || CIdx->getValue().uge(NumElts)) {
@@ -1796,9 +1806,8 @@ static void computeKnownBitsFromOperator(const Operator *I,
   case Instruction::ExtractElement: {
     // Look through extract element. If the index is non-constant or
     // out-of-range demand all elements, otherwise just the extracted element.
-    auto* EEI = cast<ExtractElementInst>(I);
-    const Value* Vec = EEI->getVectorOperand();
-    const Value* Idx = EEI->getIndexOperand();
+    const Value *Vec = I->getOperand(0);
+    const Value *Idx = I->getOperand(1);
     auto *CIdx = dyn_cast<ConstantInt>(Idx);
     unsigned NumElts = Vec->getType()->getVectorNumElements();
     APInt DemandedVecElts = APInt::getAllOnesValue(NumElts);
@@ -4607,9 +4616,22 @@ bool llvm::isGuaranteedNotToBeUndefOrPoison(const Value *V,
   // TODO: Some instructions are guaranteed to return neither undef
   // nor poison if their arguments are not poison/undef.
 
-  // TODO: Deal with other Constant subclasses.
-  if (isa<ConstantInt>(V) || isa<GlobalVariable>(V))
-    return true;
+  if (auto *C = dyn_cast<Constant>(V)) {
+    // TODO: We can analyze ConstExpr by opcode to determine if there is any
+    //       possibility of poison.
+    if (isa<UndefValue>(C) || isa<ConstantExpr>(C))
+      return false;
+
+    // TODO: Add ConstantFP and pointers.
+    if (isa<ConstantInt>(C) || isa<GlobalVariable>(C) )
+      return true;
+
+    if (C->getType()->isVectorTy())
+      return !C->containsUndefElement() && !C->containsConstantExpression();
+
+    // TODO: Recursively analyze aggregates or other constants.
+    return false;
+  }
 
   if (auto PN = dyn_cast<PHINode>(V)) {
     if (llvm::all_of(PN->incoming_values(), [](const Use &U) {

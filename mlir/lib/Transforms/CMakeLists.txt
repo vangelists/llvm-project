@@ -9,15 +9,12 @@ add_mlir_library(MLIRTransforms
   LoopCoalescing.cpp
   LoopFusion.cpp
   LoopInvariantCodeMotion.cpp
-  LoopTiling.cpp
-  LoopUnrollAndJam.cpp
-  LoopUnroll.cpp
   MemRefDataFlowOpt.cpp
   OpStats.cpp
+  ParallelLoopCollapsing.cpp
   PipelineDataTransfer.cpp
   StripDebugInfo.cpp
   SymbolDCE.cpp
-  Vectorize.cpp
   ViewOpGraph.cpp
   ViewRegionGraph.cpp
 
@@ -26,6 +23,7 @@ add_mlir_library(MLIRTransforms
 
   DEPENDS
   MLIRStandardOpsIncGen
+  MLIRTransformsPassIncGen
   )
 
 target_link_libraries(MLIRTransforms

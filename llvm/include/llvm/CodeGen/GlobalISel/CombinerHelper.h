@@ -62,6 +62,10 @@ public:
                  GISelKnownBits *KB = nullptr,
                  MachineDominatorTree *MDT = nullptr);
 
+  GISelKnownBits *getKnownBits() const {
+    return KB;
+  }
+
   /// MachineRegisterInfo::replaceRegWith() and inform the observer of the changes
   void replaceRegWith(MachineRegisterInfo &MRI, Register FromReg, Register ToReg) const;
 
@@ -209,6 +213,23 @@ public:
 
   /// Replace an instruction with a G_IMPLICIT_DEF.
   bool replaceInstWithUndef(MachineInstr &MI);
+
+  /// Delete \p MI and replace all of its uses with its \p OpIdx-th operand.
+  bool replaceSingleDefInstWithOperand(MachineInstr &MI, unsigned OpIdx);
+
+  /// Return true if \p MOP1 and \p MOP2 are register operands are defined by
+  /// equivalent instructions.
+  bool matchEqualDefs(const MachineOperand &MOP1, const MachineOperand &MOP2);
+
+  /// Return true if \p MOP is defined by a G_CONSTANT with a value equal to
+  /// \p C.
+  bool matchConstantOp(const MachineOperand &MOP, int64_t C);
+
+  /// Optimize (cond ? x : x) -> x
+  bool matchSelectSameVal(MachineInstr &MI);
+
+  /// Optimize (x op x) -> x
+  bool matchBinOpSameVal(MachineInstr &MI);
 
   /// Try to transform \p MI by using all of the above
   /// combine functions. Returns true if changed.
