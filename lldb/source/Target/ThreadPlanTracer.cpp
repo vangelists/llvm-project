@@ -672,17 +672,21 @@ static inline llvm::Error MakeErrorWithFormat(llvm::StringRef format,
 
 /// Invokes the provided callback for each register in the register context.
 ///
-/// \param[in] register_context
+/// \param[in] reg_ctx
 ///     The register context whose registers to use as arguments.
 ///
 /// \param[in] callback
 ///     The callback to invoke for each register.
 ///
-static void DoForEachRegister(RegisterContext &register_context,
-                              RegisterCallback &&callback) {
-  const std::size_t num_registers = register_context.GetRegisterCount();
+static void
+DoForEachRegister(RegisterContext &reg_ctx, RegisterCallback &&callback) {
+  const std::size_t num_registers = reg_ctx.GetRegisterCount();
   for (std::size_t reg_id = 0; reg_id < num_registers; ++reg_id) {
-    callback(register_context.GetRegisterInfoAtIndex(reg_id), reg_id);
+    // Skip registers that are slices of real registers.
+    if (const RegisterInfo *reg_info = reg_ctx.GetRegisterInfoAtIndex(reg_id);
+        !reg_info->value_regs) {
+      callback(reg_info, reg_id);
+    }
   }
 }
 
@@ -851,10 +855,7 @@ static Status RestoreOpcodeBackup(Thread &thread) {
 
 ThreadPlanInstructionTracer::HeapData::HeapData(addr_t base,
                                                 DataBufferHeap &&data)
-    : base(base), data(data), modified(false) {
-  assert("The given address does not correspond to the heap!" &&
-         IsHeapAddress(m_this->m_thread, base));
-}
+    : base(base), data(data), modified(false) {}
 
 ThreadPlanInstructionTracer::HeapData::HeapData(HeapData &&) = default;
 
@@ -863,8 +864,7 @@ ThreadPlanInstructionTracer::HeapData::~HeapData() = default;
 ThreadPlanInstructionTracer::HeapData &
 ThreadPlanInstructionTracer::HeapData::operator=(HeapData &&) = default;
 
-bool
-ThreadPlanInstructionTracer::HeapData::Contains(lldb::addr_t address) const {
+bool ThreadPlanInstructionTracer::HeapData::Contains(addr_t address) const {
   return address >= base && address <= (base + data.GetByteSize() - 1);
 }
 
@@ -894,29 +894,23 @@ ThreadPlanInstructionTracer::Tracepoint::operator=(Tracepoint &&) = default;
 #pragma mark ThreadPlanInstructionTracer
 
 ThreadPlanInstructionTracer::ThreadPlanInstructionTracer(Thread &thread)
-  : ThreadPlanTracer(thread), m_target(nullptr), m_disassembler_sp(),
-    m_current_tracepoint(Thread::InvalidTracepointID), m_bookmarks(),
-    m_special_function_handlers(), m_artificial_breakpoint_ids(),
+  : ThreadPlanTracer(thread), m_current_tracepoint(Thread::InvalidTracepointID),
+    m_bookmarks(), m_artificial_breakpoint_ids(),
     m_stepped_while_suspended(false), m_artificial_step(false),
-    m_stepped_back(false), m_modified_heap(false),
-    m_emulating_stack_frames(false) {
-  ThreadPlanInstructionTracer::m_this = this;
-  InitializeSpecialFunctionHandlers();
-}
+    m_modified_heap(false), m_emulating_stack_frames(false) {}
 
 ThreadPlanInstructionTracer::ThreadPlanInstructionTracer(Thread &thread,
                                                          StreamSP &stream_sp)
-  : ThreadPlanTracer(thread, stream_sp), m_target(nullptr), m_disassembler_sp(),
+  : ThreadPlanTracer(thread, stream_sp),
     m_current_tracepoint(Thread::InvalidTracepointID), m_bookmarks(),
-    m_special_function_handlers(), m_artificial_breakpoint_ids(),
-    m_stepped_while_suspended(false), m_artificial_step(false),
-    m_stepped_back(false), m_emulating_stack_frames(false) {
-  ThreadPlanInstructionTracer::m_this = this;
-  InitializeSpecialFunctionHandlers();
-}
+    m_artificial_breakpoint_ids(), m_stepped_while_suspended(false),
+    m_artificial_step(false), m_emulating_stack_frames(false) {}
 
 ThreadPlanInstructionTracer::~ThreadPlanInstructionTracer() {
   DisableTracing();
+  assert("A tracer pointer does not exist for this thread!" &&
+         m_tracers.find(m_thread.GetID()) != m_tracers.end());
+  m_tracers.erase(m_thread.GetID());
 }
 
 #pragma mark Base Class Methods
@@ -926,38 +920,31 @@ ThreadPlanTracer::Type ThreadPlanInstructionTracer::GetType() const {
 }
 
 void ThreadPlanInstructionTracer::TracingStarted() {
+  InitializeStaticMembersIfNeeded();
   assert("Recording history not empty!" && m_timeline.empty());
-  m_this = this;
   m_timeline.reserve(1000);
-  m_target = &m_thread.GetProcess()->GetTarget();
-  m_disassembler_sp = Disassembler::FindPlugin(m_target->GetArchitecture(),
-                                               nullptr, nullptr);
 
   // Capture the state of the thread at the current PC.
   Log();
 }
 
 void ThreadPlanInstructionTracer::TracingEnded() {
-  for (user_id_t breakpoint_id : m_artificial_breakpoint_ids) {
+  for (break_id_t breakpoint_id : m_artificial_breakpoint_ids) {
     m_target->RemoveBreakpointByID(breakpoint_id);
   }
   m_artificial_breakpoint_ids.clear();
-  m_target = nullptr;
   m_timeline.clear();
   m_current_tracepoint = Thread::InvalidTracepointID;
   m_bookmarks.clear();
-  m_disassembler_sp.reset();
   m_stepped_while_suspended = false;
   m_artificial_step = false;
-  m_stepped_back = false;
   m_modified_heap = false;
   m_emulating_stack_frames = false;
-  m_this = nullptr;
 }
 
 void ThreadPlanInstructionTracer::TracingSuspendRequested() {
   if (HasBeenSuspendedInternally()) {
-    for (user_id_t breakpoint_id : m_artificial_breakpoint_ids) {
+    for (break_id_t breakpoint_id : m_artificial_breakpoint_ids) {
       m_target->DisableBreakpointByID(breakpoint_id);
     }
   }
@@ -968,14 +955,14 @@ void ThreadPlanInstructionTracer::TracingResumed() {
     Log();
     m_stepped_while_suspended = false;
   }
-  for (user_id_t breakpoint_id : m_artificial_breakpoint_ids) {
+  for (break_id_t breakpoint_id : m_artificial_breakpoint_ids) {
     m_target->EnableBreakpointByID(breakpoint_id);
   }
 }
 
 void ThreadPlanInstructionTracer::ExpressionEvaluationFinished() {
   if (GetTracingToken() == TracingToken::ExpressionEvaluation &&
-      m_stepped_back) {
+      m_emulating_stack_frames) {
     const uint32_t selected_frame_index = m_thread.GetSelectedFrameIndex();
     RestoreSnapshot(m_current_tracepoint);
     m_thread.SetSelectedFrameByIndex(selected_frame_index);
@@ -1030,11 +1017,29 @@ bool ThreadPlanInstructionTracer::ShouldAcceptToken(TracingToken token) const {
 
 #pragma mark Helper Methods
 
+void ThreadPlanInstructionTracer::InitializeStaticMembersIfNeeded() {
+  if (!m_target) {
+    const tid_t tid = m_thread.GetID();
+    assert("A tracer pointer already exists for this thread!" &&
+           m_tracers.find(tid) == m_tracers.end());
+    m_tracers.emplace(tid, this);
+
+    m_target = &m_thread.GetProcess()->GetTarget();
+    m_disassembler_sp = Disassembler::FindPlugin(m_target->GetArchitecture(),
+                                                 nullptr, nullptr);
+
+    InitializeSpecialFunctionHandlers();
+  }
+}
+
 void ThreadPlanInstructionTracer::InitializeSpecialFunctionHandlers() {
   const auto handle_cstring_mem_funcs = [&]() {
     const uint64_t destination = GetRegisterValueAsUInt64(ConstString("rdi"));
     const uint64_t count = GetRegisterValueAsUInt64(ConstString("rdx"));
     if (destination == UINT64_MAX || count == UINT64_MAX) {
+      return;
+    }
+    if (!IsHeapAddress(m_thread, destination)) {
       return;
     }
     if (llvm::Optional<HeapData> heap_data = GetHeapData(destination, count);
@@ -1061,6 +1066,20 @@ void ThreadPlanInstructionTracer::FormatError(llvm::StringRef format,
                                                  std::forward<Args>(args)...));
     stream->Flush();
   }
+}
+
+template <typename T>
+std::string ThreadPlanInstructionTracer::TakeErrorString(
+    llvm::Expected<T> &unexpected) const {
+  return llvm::toString(std::move(unexpected.takeError()));
+}
+
+ThreadPlanInstructionTracer *
+ThreadPlanInstructionTracer::GetTracerPtrForThread(tid_t tid) {
+  if (const auto tracer = m_tracers.find(tid); tracer != m_tracers.end()) {
+    return std::get<ThreadPlanInstructionTracer *>(*tracer);
+  }
+  return nullptr;
 }
 
 #pragma mark Managing Bookmarks
@@ -1459,7 +1478,7 @@ Status ThreadPlanInstructionTracer::ListVariableWriteLocations(
 }
 
 Status ThreadPlanInstructionTracer::ListHeapAddressWriteLocations(
-    Stream &stream, lldb::addr_t heap_address, std::size_t num_locations,
+    Stream &stream, addr_t heap_address, std::size_t num_locations,
     TracedWriteTiming write_timing) {
   if (!IsHeapAddress(m_thread, heap_address)) {
     return Status("The given address does not belong to the heap.");
@@ -1612,7 +1631,7 @@ Status ThreadPlanInstructionTracer::Navigate(std::size_t num_statements,
 }
 
 Status
-ThreadPlanInstructionTracer::NavigateToAddress(lldb::addr_t address,
+ThreadPlanInstructionTracer::NavigateToAddress(addr_t address,
                                                NavigationDirection direction) {
   const auto predicate = [&](Tracepoint &tracepoint) {
     return (GetRecordedPCForStackFrame(tracepoint) == address)
@@ -1848,18 +1867,17 @@ ThreadPlanInstructionTracer::StepBackInstruction(std::size_t num_instructions) {
   // Even if tracing has been suspended to avoid tracing an unwanted symbol,
   // the user should still be able to step back.
   if (HasBeenSuspendedInternally()) {
-    m_this->EnableSingleStepping();
+    EnableSingleStepping();
 
     // Mark this step as artificial to prevent capturing a duplicate snapshot
     // when tracing is resumed.
     m_artificial_step = true;
-    m_this->ResumeTracing(TracingToken::UserCommand);
+    ResumeTracing(TracingToken::UserCommand);
     m_artificial_step = false;
   }
 
   // Restore the state at the requested point in time.
   RestoreSnapshot(m_current_tracepoint - num_instructions);
-  m_stepped_back = true;
 
   return Status();
 }
@@ -1975,6 +1993,8 @@ ThreadPlanInstructionTracer::GetStackFrameVariableValues(StackFrame &frame) {
 
 llvm::Optional<ThreadPlanInstructionTracer::HeapData>
 ThreadPlanInstructionTracer::GetHeapData(addr_t address, offset_t size) {
+  assert("The given address does not correspond to the heap!" &&
+         IsHeapAddress(m_thread, address));
   Status error;
   DataBufferHeap heap_data(size, 0);
   m_thread.GetProcess()->ReadMemory(address, heap_data.GetBytes(),
@@ -2137,7 +2157,7 @@ void ThreadPlanInstructionTracer::RedoHeapWritesUpTo(
 
 void
 ThreadPlanInstructionTracer::RestoreStackFrameState(std::size_t frame_idx) {
-  if (GetState() != State::eEnabled || !m_stepped_back) {
+  if (GetState() != State::eEnabled) {
     return;
   }
   Tracepoint &current_tracepoint = m_timeline[m_current_tracepoint];
@@ -2194,7 +2214,7 @@ uint64_t ThreadPlanInstructionTracer::GetRegisterValueAsUInt64(
   return fail_value;
 }
 
-lldb::addr_t ThreadPlanInstructionTracer::CalculateAddressFromOperand(
+addr_t ThreadPlanInstructionTracer::CalculateAddressFromOperand(
     const Instruction::Operand &operand) const {
   if (operand.m_type != Instruction::Operand::Type::Dereference) {
     return LLDB_INVALID_ADDRESS;
@@ -2309,25 +2329,32 @@ bool ThreadPlanInstructionTracer::ShouldAvoidCallTarget(
 }
 
 bool ThreadPlanInstructionTracer::AvoidedSymbolBreakpointHitCallback(
-    void *baton, StoppointCallbackContext *context, user_id_t breakpoint_id,
+    void *tid_baton, StoppointCallbackContext *context, user_id_t breakpoint_id,
     user_id_t breakpoint_location_id) {
-  const auto forget_artificial_breakpoint = [&](user_id_t breakpoint_id) {
-    auto bp_id_iter = std::find(m_this->m_artificial_breakpoint_ids.begin(),
-                                m_this->m_artificial_breakpoint_ids.end(),
+  const auto forget_artificial_breakpoint =
+      [&](ArtificialBreakpointIDs &artificial_breakpoint_ids,
+          break_id_t breakpoint_id) {
+    auto bp_id_iter = std::find(artificial_breakpoint_ids.begin(),
+                                artificial_breakpoint_ids.end(),
                                 breakpoint_id);
-    std::swap(*bp_id_iter, m_this->m_artificial_breakpoint_ids.back());
-    m_this->m_artificial_breakpoint_ids.pop_back();
+    assert("Artificial breakpoint not found!" &&
+           bp_id_iter != artificial_breakpoint_ids.end());
+    std::swap(*bp_id_iter, artificial_breakpoint_ids.back());
+    artificial_breakpoint_ids.pop_back();
   };
 
-  // Clear artificial breakpoint.
-  m_this->m_target->RemoveBreakpointByID(breakpoint_id);
-  forget_artificial_breakpoint(breakpoint_id);
-
-  // Resume tracing and single stepping, if suspended by the tracer itself.
-  if (m_this->HasBeenSuspendedInternally()) {
-    m_this->EnableSingleStepping();
-    m_this->ResumeTracing(TracingToken::Internal);
+  // Clear artificial breakpoint and resume tracing, if needed.
+  const tid_t tid = reinterpret_cast<tid_t>(tid_baton);
+  if (ThreadPlanInstructionTracer *tracer = GetTracerPtrForThread(tid);
+      tracer) {
+    forget_artificial_breakpoint(tracer->m_artificial_breakpoint_ids,
+                                 breakpoint_id);
+    if (tracer->HasBeenSuspendedInternally()) {
+      tracer->EnableSingleStepping();
+      tracer->ResumeTracing(TracingToken::Internal);
+    }
   }
+  m_target->RemoveBreakpointByID(breakpoint_id);
 
   // Allow target to run.
   return false;
@@ -2341,7 +2368,8 @@ void ThreadPlanInstructionTracer::HandleCallTargetToAvoid(addr_t bp_addr) {
   // Set an artificial breakpoint at the instruction after the call.
   if (BreakpointSP bp = m_target->CreateBreakpoint(bp_addr, true, false); bp) {
     m_artificial_breakpoint_ids.push_back(bp->GetID());
-    bp->SetCallback(AvoidedSymbolBreakpointHitCallback, nullptr, true);
+    void *tid_baton = reinterpret_cast<void *>(m_thread.GetID());
+    bp->SetCallback(AvoidedSymbolBreakpointHitCallback, tid_baton, true);
     bp->SetBreakpointKind("call-to-avoided-symbol-finished");
     bp->SetOneShot(true);
     bp->SetAutoContinue(true);
@@ -2433,8 +2461,8 @@ void ThreadPlanInstructionTracer::HandleInstructionThatMayStore(
 
 void ThreadPlanInstructionTracer::ClearSubsequentRecordingHistoryIfNeeded() {
   // The recording history needs to be cleared only in case the thread has
-  // stepped or continued forward after having stepped back.
-  if (!m_stepped_back) {
+  // stepped or continued forward while the thread state was being emulated.
+  if (!m_emulating_stack_frames) {
     return;
   }
 
@@ -2456,7 +2484,6 @@ void ThreadPlanInstructionTracer::ClearSubsequentRecordingHistoryIfNeeded() {
 
   // Cancel any pending heap region backup.
   m_modified_heap = false;
-  m_stepped_back = false;
 }
 
 void ThreadPlanInstructionTracer::Log() {
@@ -2477,7 +2504,7 @@ void ThreadPlanInstructionTracer::Log() {
   // state was being emulated by this tracer.
   ClearSubsequentRecordingHistoryIfNeeded();
 
-  // The thread stepped forward, so any previously restored state has been
+  // The thread resumed forward, so any previously restored state has been
   // replaced by the real one.
   m_emulating_stack_frames = false;
 
@@ -2500,7 +2527,7 @@ void ThreadPlanInstructionTracer::Log() {
   // currently stopped at a call that needs additional handling (see below).
   llvm::Expected<InstructionList &> inst_list = DisassembleInstructions(2);
   if (!inst_list) {
-    FormatError(llvm::toString(std::move(inst_list.takeError())));
+    FormatError(TakeErrorString(inst_list));
     return;
   }
 

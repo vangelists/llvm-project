@@ -661,10 +661,10 @@ private:
     VariableValues variables; ///< The values of stack frame variables.
     llvm::Optional<HeapData> heap_data; ///< The contents of a heap region right
                                         ///< before being overwritten by an
-                                        ///< instruction that modifies the
+                                        ///< instruction that modifies that
                                         ///< region, if applicable.
     uint32_t frame_depth; ///< The depth of the deepest stack frame.
-    StackFrames frames; ///< The stack frames present when the thread stoppped.
+    StackFrames frames; ///< The stack frames present when the thread stopped.
     lldb::StopInfoSP stop_info; ///< The stop reason of the thread.
     ThreadPlans completed_plans; ///< The thread plans completed by the stop.
     uint32_t line; ///< The source line at this point in time, if available.
@@ -673,6 +673,9 @@ private:
   using Timeline = std::vector<Tracepoint>;
   using Bookmarks = std::map<Thread::TracingBookmarkID,
                              Thread::TracingBookmark>;
+  using Tracers = std::map<lldb::tid_t, ThreadPlanInstructionTracer *>;
+  using ArtificialBreakpointIDs = std::vector<lldb::break_id_t>;
+
   using TracepointCallback = std::function<Status(Tracepoint &)>;
   using SpecialFunctionHandler = std::function<void(void)>;
   using SpecialFunctionHandlers = llvm::StringMap<SpecialFunctionHandler>;
@@ -926,8 +929,8 @@ private:
   /// Resumes tracing and single stepping, if suspended by the tracer itself
   /// before calling a symbol to avoid.
   ///
-  /// \param[in] baton
-  ///     A generic pointer that will be passed to the callback when invoked.
+  /// \param[in] tid_baton
+  ///     The ID of the traced thread to be passed to the callback when invoked.
   ///
   /// \param[in] context
   ///     The execution context of the callback.
@@ -942,7 +945,7 @@ private:
   ///     `true` if the target should stop.
   ///
   static bool AvoidedSymbolBreakpointHitCallback(
-      void *baton, StoppointCallbackContext *context,
+      void *tid_baton, StoppointCallbackContext *context,
       lldb::user_id_t breakpoint_id, lldb::user_id_t breakpoint_location_id);
 
   /// Disassembles and returns the requested number of instructions starting
@@ -1199,10 +1202,6 @@ private:
                    TracepointCallback &&initializer = {},
                    TracepointCallback &&past_limit = {});
 
-  /// Initializes the registry of special function handlers.
-  ///
-  void InitializeSpecialFunctionHandlers();
-
   /// Prints the given formatted message to the default logging stream using
   /// the prefix "error: " and a newline in the end.
   ///
@@ -1215,11 +1214,52 @@ private:
   template <typename... Args>
   void FormatError(llvm::StringRef format, Args &&... args) const;
 
-  Target *m_target; ///< The target that owns the thread being traced.
+  /// Extracts and returns the error message from given unexpected error.
+  ///
+  /// \param[in] unexpected
+  ///     The unexpected error whose message to extract and return.
+  ///
+  /// \return
+  ///     The error message from given unexpected error.
+  ///
+  template <typename T>
+  std::string TakeErrorString(llvm::Expected<T> &unexpected) const;
 
-  lldb::DisassemblerSP m_disassembler_sp; ///< The disassembler used to decode
-                                          ///< the instructions of the current
-                                          ///< target.
+  /// Initializes the static member of the tracer.
+  ///
+  void InitializeStaticMembersIfNeeded();
+
+  /// Initializes the registry of special function handlers.
+  ///
+  void InitializeSpecialFunctionHandlers();
+
+  /// Returns a pointer to the `ThreadPlanInstructionTracer` associated with the
+  /// thread with the provided ID.
+  ///
+  /// \param[in] tid
+  ///     The ID of the thread that owns the tracer to return.
+  ///
+  /// \return
+  ///     A pointer to the `ThreadPlanInstructionTracer` associated with the
+  ///     thread with the provided ID, if any; `nullptr` otherwise.
+  ///
+  static ThreadPlanInstructionTracer *GetTracerPtrForThread(lldb::tid_t tid);
+
+  static inline Target *m_target; ///< The target that owns the traced threads.
+
+  static inline lldb::DisassemblerSP m_disassembler_sp; ///< The disassembler
+                                                        ///< used to decode the
+                                                        ///< instructions of the
+                                                        ///< current target.
+
+  static inline Tracers m_tracers; ///< Mapping between threads and their
+                                   ///< tracers, to enable calling non-static
+                                   ///< methods from static ones.
+
+  static inline SpecialFunctionHandlers
+  m_special_function_handlers; ///< Registry of handlers for calls that need
+                               ///< special handling, e.g. system calls or calls
+                               ///< to known memory manipulation functions.
 
   Timeline m_timeline; ///< Holds the per-instruction snapshots that make up the
                        ///< thread's recorded history.
@@ -1230,19 +1270,11 @@ private:
   Bookmarks m_bookmarks; ///< Holds the bookmarks to points of interest in the
                          ///< thread's recorded history.
 
-  SpecialFunctionHandlers m_special_function_handlers; ///< Registry of handlers
-                                                       ///< for calls that need
-                                                       ///< special handling,
-                                                       ///< e.g. system calls or
-                                                       ///< calls to known
-                                                       ///< memory manipulation
-                                                       ///< functions.
-
-  std::vector<lldb::user_id_t> m_artificial_breakpoint_ids; ///< Breakpoints set
-                                                            ///< after calls to
-                                                            ///< avoided symbols
-                                                            ///< in order to
-                                                            ///< resume tracing.
+  ArtificialBreakpointIDs m_artificial_breakpoint_ids; ///< Breakpoints set
+                                                       ///< after calls to
+                                                       ///< avoided symbols in
+                                                       ///< order to resume
+                                                       ///< tracing.
 
   bool m_stepped_while_suspended; ///< Used to avoid capturing program state at
                                   ///< a particular point in time more than once
@@ -1255,11 +1287,6 @@ private:
                           ///< unwanted symbol. It is used to prevent capturing
                           ///< a duplicate snapshot when tracing is resumed.
 
-  bool m_stepped_back; ///< This flag is set when stepping backwards, so that
-                       ///< the tracer can discard recorded history following
-                       ///< the current instruction when the thread continues
-                       ///< or steps forward.
-
   bool m_modified_heap; ///< Set when an instruction that writes to the heap is
                         ///< detected, in order to denote that the newly written
                         ///< data need to be backed up right after the store,
@@ -1269,11 +1296,6 @@ private:
                                  ///< stack frames is currently being emulated
                                  ///< by this tracer in order to mimic a
                                  ///< previous point in time.
-
-  static inline ThreadPlanInstructionTracer *m_this; ///< Pointer to self, to
-                                                     ///< enable calling
-                                                     ///< non-static methods
-                                                     ///< from static ones.
 
   DISALLOW_COPY_AND_ASSIGN(ThreadPlanInstructionTracer);
 };

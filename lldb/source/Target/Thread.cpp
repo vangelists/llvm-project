@@ -391,7 +391,8 @@ uint32_t Thread::SetSelectedFrame(lldb_private::StackFrame *frame,
                                   bool broadcast) {
   uint32_t ret_value = GetStackFrameList()->SetSelectedFrame(frame);
   ThreadPlanTracer *tracer = GetBasePlanTracer().get();
-  if (tracer->GetType() == ThreadPlanTracer::Type::eInstruction) {
+  if (tracer->GetType() == ThreadPlanTracer::Type::eInstruction &&
+      IsStackFrameStateEmulated()) {
     static_cast<ThreadPlanInstructionTracer *>(tracer)->
         RestoreStackFrameState(frame->GetFrameIndex());
   }
@@ -404,7 +405,8 @@ uint32_t Thread::SetSelectedFrame(lldb_private::StackFrame *frame,
 bool Thread::SetSelectedFrameByIndex(uint32_t frame_idx, bool broadcast) {
   StackFrameSP frame_sp(GetStackFrameList()->GetFrameAtIndex(frame_idx));
   ThreadPlanTracer *tracer = GetBasePlanTracer().get();
-  if (tracer->GetType() == ThreadPlanTracer::Type::eInstruction) {
+  if (tracer->GetType() == ThreadPlanTracer::Type::eInstruction &&
+      IsStackFrameStateEmulated()) {
     static_cast<ThreadPlanInstructionTracer *>(tracer)->
         RestoreStackFrameState(frame_idx);
   }
