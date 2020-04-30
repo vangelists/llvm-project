@@ -1002,7 +1002,7 @@ bool RegisterContextUnwind::ReadRegisterValueFromRegisterLocation(
   // If the stack frame state is being emulated as a result of a step back to
   // mimic a previous point in time, fetch the restored register value directly.
   if (m_thread.IsStackFrameStateEmulated()) {
-    uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
+    const uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
     value.CopyValue(GetRecordedRegisterValue(register_number));
     return true;
   }
@@ -1064,7 +1064,7 @@ bool RegisterContextUnwind::WriteRegisterValueToRegisterLocation(
   // If the stack frame state is being emulated as a result of a step back to
   // mimic a previous point in time, overwrite the recorded register value.
   if (m_thread.IsStackFrameStateEmulated()) {
-    uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
+    const uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
     GetRecordedRegisterValue(register_number).CopyValue(value);
     return true;
   }

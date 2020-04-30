@@ -91,7 +91,13 @@ void ThreadPlanStack::RestoreCompletedPlanCheckpoint(size_t checkpoint) {
   assert(result != m_completed_plan_store.end() &&
          "Asked for a checkpoint that didn't exist");
   m_completed_plans.swap((*result).second);
-  m_completed_plan_store.erase(result);
+
+  // The instruction tracer is responsible for managing checkpoints when active,
+  // so avoid discarding any checkpoints during recording.
+  if (GetBasePlanInstructionTracer() && !TracingDisabled()) {
+    return;
+  }
+  DiscardCompletedPlanCheckpoint(std::get<const size_t>(*result));
 }
 
 void ThreadPlanStack::DiscardCompletedPlanCheckpoint(size_t checkpoint) {
@@ -124,13 +130,72 @@ void ThreadPlanStack::ThreadDestroyed(Thread *thread) {
   }
 }
 
-void ThreadPlanStack::EnableTracer(bool value, bool single_stepping) {
-  for (ThreadPlanSP plan : m_plans) {
-    if (plan->GetThreadPlanTracer()) {
-      plan->GetThreadPlanTracer()->EnableTracing(value);
-      plan->GetThreadPlanTracer()->EnableSingleStep(single_stepping);
-    }
+ThreadPlanTracer *ThreadPlanStack::GetBasePlanTracer() {
+  ThreadPlan *base_plan = GetPlanByIndex(0).get();
+  assert("Plan at index 0 is not a base plan!" && base_plan &&
+         base_plan->IsBasePlan());
+  ThreadPlanTracer *base_plan_tracer = base_plan->GetThreadPlanTracer().get();
+  assert("Base plan has no tracer!" && base_plan_tracer);
+  return base_plan_tracer;
+}
+
+ThreadPlanInstructionTracer *ThreadPlanStack::GetBasePlanInstructionTracer() {
+  if constexpr (ThreadPlan::GetThreadPlanTracerType() ==
+                    ThreadPlanTracer::Type::eInstruction) {
+    return static_cast<ThreadPlanInstructionTracer *>(GetBasePlanTracer());
   }
+  // Base plan tracer is not an instruction tracer.
+  return nullptr;
+}
+
+void ThreadPlanStack::EnableTracing() {
+  GetBasePlanTracer()->EnableTracing();
+}
+
+void ThreadPlanStack::DisableTracing() {
+  GetBasePlanTracer()->DisableTracing();
+}
+
+void ThreadPlanStack::SuspendTracing(TracingToken token) {
+  if (token == TracingToken::ExpressionEvaluation ||
+      token == TracingToken::UserCommand) {
+    GetBasePlanTracer()->SuspendTracing(token);
+  } else {
+    llvm_unreachable("Invalid tracing token!");
+  }
+}
+
+void ThreadPlanStack::ResumeTracing(TracingToken token) {
+  if (token == TracingToken::ExpressionEvaluation ||
+      token == TracingToken::UserCommand) {
+    GetBasePlanTracer()->ResumeTracing(token);
+  } else {
+    llvm_unreachable("Invalid tracing token!");
+  }
+}
+
+bool ThreadPlanStack::TracingEnabled() {
+  return GetBasePlanTracer()->GetState() == ThreadPlanTracer::State::eEnabled;
+}
+
+bool ThreadPlanStack::TracingDisabled() {
+  return GetBasePlanTracer()->GetState() == ThreadPlanTracer::State::eDisabled;
+}
+
+bool ThreadPlanStack::TracingSuspended() {
+  return GetBasePlanTracer()->GetState() == ThreadPlanTracer::State::eSuspended;
+}
+
+void ThreadPlanStack::EnableSingleStepping() {
+  GetBasePlanTracer()->EnableSingleStepping();
+}
+
+void ThreadPlanStack::DisableSingleStepping() {
+  GetBasePlanTracer()->DisableSingleStepping();
+}
+
+bool ThreadPlanStack::SingleSteppingEnabled() {
+  return GetBasePlanTracer()->SingleSteppingEnabled();
 }
 
 void ThreadPlanStack::SetTracer(lldb::ThreadPlanTracerSP &tracer_sp) {
@@ -145,7 +210,8 @@ void ThreadPlanStack::PushPlan(lldb::ThreadPlanSP new_plan_sp) {
   assert((m_plans.size() > 0 || new_plan_sp->IsBasePlan()) &&
          "Zeroth plan must be a base plan");
 
-  if (!new_plan_sp->GetThreadPlanTracer()) {
+  // Avoid assigning a tracer to temporary base plans not used for tracing.
+  if (!new_plan_sp->GetThreadPlanTracer() && !new_plan_sp->IsBasePlan()) {
     assert(!m_plans.empty());
     new_plan_sp->SetThreadPlanTracer(m_plans.back()->GetThreadPlanTracer());
   }

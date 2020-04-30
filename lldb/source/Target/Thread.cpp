@@ -23,7 +23,6 @@
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/LanguageRuntime.h"
 #include "lldb/Target/Process.h"
-#include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/StackFrameRecognizer.h"
 #include "lldb/Target/StopInfo.h"
 #include "lldb/Target/SystemRuntime.h"
@@ -128,12 +127,6 @@ FileSpecList ThreadProperties::GetLibrariesToAvoid() const {
   return option_value->GetCurrentValue();
 }
 
-bool ThreadProperties::GetTraceEnabledState() const {
-  const uint32_t idx = ePropertyEnableThreadTrace;
-  return m_collection_sp->GetPropertyAtIndexAsBoolean(
-      nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
-}
-
 bool ThreadProperties::GetStepInAvoidsNoDebug() const {
   const uint32_t idx = ePropertyStepInAvoidsNoDebug;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
@@ -149,6 +142,33 @@ bool ThreadProperties::GetStepOutAvoidsNoDebug() const {
 uint64_t ThreadProperties::GetMaxBacktraceDepth() const {
   const uint32_t idx = ePropertyMaxBacktraceDepth;
   return m_collection_sp->GetPropertyAtIndexAsUInt64(
+      nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
+}
+
+const RegularExpression *
+ThreadProperties::GetSymbolsToAvoidTracingRegex() const {
+  const uint32_t idx = ePropertyTracingAvoidSymbolsRegex;
+  return m_collection_sp->GetPropertyAtIndexAsOptionValueRegex(nullptr, idx);
+}
+
+FileSpecList ThreadProperties::GetLibrariesToAvoidTracing() const {
+  const uint32_t idx = ePropertyTracingAvoidLibraries;
+  const OptionValueFileSpecList *option_value =
+      m_collection_sp->GetPropertyAtIndexAsOptionValueFileSpecList(nullptr,
+                                                                   false, idx);
+  return option_value ? option_value->GetCurrentValue()
+                      : FileSpecList();
+}
+
+bool ThreadProperties::GetIgnoreTracingAvoidSettings() const {
+  const uint32_t idx = ePropertyTracingIgnoreAvoidSettings;
+  return m_collection_sp->GetPropertyAtIndexAsBoolean(
+      nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
+}
+
+bool ThreadProperties::GetTracingJumpOverDeallocationFunctions() const {
+  const uint32_t idx = ePropertyTracingJumpOverDeallocationFunctions;
+  return m_collection_sp->GetPropertyAtIndexAsBoolean(
       nullptr, idx, g_thread_properties[idx].default_uint_value != 0);
 }
 
@@ -211,6 +231,73 @@ Thread::ThreadEventData::GetStackFrameFromEvent(const Event *event_ptr) {
     }
   }
   return frame_sp;
+}
+
+// TracingBookmark class
+
+Thread::TracingBookmark::TracingBookmark(Thread &thread, TracingBookmarkID id,
+                                         TracepointID tracepoint_id,
+                                         llvm::StringRef name, addr_t pc)
+    : m_thread(thread), m_id(id), m_name(name) {
+  SetMarkedTracepointID(tracepoint_id, pc);
+}
+
+Thread::TracingBookmark::TracingBookmark(TracingBookmark &&) = default;
+
+Thread::TracingBookmark::~TracingBookmark() = default;
+
+Thread::TracepointID Thread::TracingBookmark::GetID() const {
+  return m_id;
+}
+
+llvm::StringRef Thread::TracingBookmark::GetName() const {
+  return m_name;
+}
+
+std::string Thread::TracingBookmark::GetFormattedName() const {
+  return !m_name.empty() ? "\"" + m_name + "\"" : "<anonymous>";
+}
+
+Thread::TracepointID Thread::TracingBookmark::GetMarkedTracepointID() const {
+  return m_tracepoint_id;
+}
+
+addr_t Thread::TracingBookmark::GetPC() const {
+  return m_pc.GetLoadAddress(m_thread.CalculateTarget().get());
+}
+
+void Thread::TracingBookmark::GetDescription(
+    Stream &stream, lldb::DescriptionLevel level) const {
+  switch (level) {
+  case lldb::eDescriptionLevelBrief:
+  case lldb::eDescriptionLevelInitial:
+    stream.Format("bookmark at tracepoint {0}: {1}", m_tracepoint_id,
+                  GetFormattedName());
+    break;
+  case lldb::eDescriptionLevelFull:
+  case lldb::eDescriptionLevelVerbose:
+    SymbolContext sc;
+    m_pc.CalculateSymbolContext(&sc);
+    ExecutionContextScope *exe_scope = m_thread.CalculateProcess().get();
+    stream.Format("{0}: {1}\n  └─ Tracepoint {2}: ", m_id, GetFormattedName(),
+                  m_tracepoint_id);
+    sc.DumpStopContext(&stream, exe_scope, m_pc, false, true, false, true,
+                       true);
+    stream.PutCString(", address = ");
+    m_pc.Dump(&stream, exe_scope, Address::DumpStyleLoadAddress);
+    break;
+  }
+  stream.EOL();
+}
+
+void Thread::TracingBookmark::SetName(llvm::StringRef name) {
+  m_name = name;
+}
+
+void Thread::TracingBookmark::SetMarkedTracepointID(TracepointID tracepoint_id,
+                                                    addr_t pc) {
+  m_tracepoint_id = tracepoint_id;
+  m_pc.SetOpcodeLoadAddress(pc, m_thread.CalculateTarget().get());
 }
 
 // Thread class
@@ -278,6 +365,11 @@ lldb::StackFrameSP Thread::GetSelectedFrame() {
 uint32_t Thread::SetSelectedFrame(lldb_private::StackFrame *frame,
                                   bool broadcast) {
   uint32_t ret_value = GetStackFrameList()->SetSelectedFrame(frame);
+  ThreadPlanInstructionTracer *instruction_tracer =
+      GetPlans().GetBasePlanInstructionTracer();
+  if (instruction_tracer && IsStackFrameStateEmulated()) {
+    instruction_tracer->RestoreStackFrameState(frame->GetFrameIndex());
+  }
   if (broadcast)
     BroadcastSelectedFrameChange(frame->GetStackID());
   FunctionOptimizationWarning(frame);
@@ -286,6 +378,11 @@ uint32_t Thread::SetSelectedFrame(lldb_private::StackFrame *frame,
 
 bool Thread::SetSelectedFrameByIndex(uint32_t frame_idx, bool broadcast) {
   StackFrameSP frame_sp(GetStackFrameList()->GetFrameAtIndex(frame_idx));
+  ThreadPlanInstructionTracer *instruction_tracer =
+      GetPlans().GetBasePlanInstructionTracer();
+  if (instruction_tracer && IsStackFrameStateEmulated()) {
+    instruction_tracer->RestoreStackFrameState(frame_idx);
+  }
   if (frame_sp) {
     GetStackFrameList()->SetSelectedFrame(frame_sp.get());
     if (broadcast)
@@ -783,7 +880,7 @@ bool Thread::ShouldStop(Event *event_ptr) {
     LLDB_LOGF(log, "Plan stack initial state:\n%s", s.GetData());
   }
 
-  // The top most plan always gets to do the trace log...
+  // The top most plan always gets to do the trace log.
   current_plan->DoTraceLog();
 
   // First query the stop info's ShouldStopSynchronous.  This handles
@@ -1160,8 +1257,44 @@ Status Thread::QueueThreadPlan(ThreadPlanSP &thread_plan_sp,
   return status;
 }
 
-void Thread::EnableTracer(bool value, bool single_stepping) {
-  GetPlans().EnableTracer(value, single_stepping);
+void Thread::EnableTracing() {
+  GetPlans().EnableTracing();
+}
+
+void Thread::DisableTracing() {
+  GetPlans().DisableTracing();
+}
+
+void Thread::SuspendTracing(TracingToken token) {
+  GetPlans().SuspendTracing(token);
+}
+
+void Thread::ResumeTracing(TracingToken token) {
+  GetPlans().ResumeTracing(token);
+}
+
+bool Thread::TracingEnabled() {
+  return GetPlans().TracingEnabled();
+}
+
+bool Thread::TracingDisabled() {
+  return GetPlans().TracingDisabled();
+}
+
+bool Thread::TracingSuspended() {
+  return GetPlans().TracingSuspended();
+}
+
+void Thread::EnableSingleStepping() {
+  GetPlans().EnableSingleStepping();
+}
+
+void Thread::DisableSingleStepping() {
+  GetPlans().DisableSingleStepping();
+}
+
+bool Thread::SingleSteppingEnabled() {
+  return GetPlans().SingleSteppingEnabled();
 }
 
 void Thread::SetTracer(lldb::ThreadPlanTracerSP &tracer_sp) {
@@ -1221,7 +1354,7 @@ Status Thread::UnwindInnermostExpression() {
 }
 
 ThreadPlanSP Thread::QueueFundamentalPlan(bool abort_other_plans) {
-  ThreadPlanSP thread_plan_sp(new ThreadPlanBase(*this));
+  ThreadPlanSP thread_plan_sp(new ThreadPlanBase(*this, true));
   QueueThreadPlan(thread_plan_sp, abort_other_plans);
   return thread_plan_sp;
 }
@@ -1408,6 +1541,12 @@ StackFrameListSP Thread::GetStackFrameList() {
         std::make_shared<StackFrameList>(*this, m_prev_frames_sp, true);
 
   return m_curr_frames_sp;
+}
+
+void Thread::SetStackFrameList(StackFrameListSP curr_frames_sp) {
+  std::lock_guard<std::recursive_mutex> guard(m_frame_mutex);
+  ClearStackFrames();
+  m_curr_frames_sp = curr_frames_sp;
 }
 
 void Thread::ClearStackFrames() {
@@ -1975,6 +2114,154 @@ Status Thread::StepOut() {
     error.SetErrorString("process not stopped");
   }
   return error;
+}
+
+Status Thread::StepBack(std::size_t num_statements) {
+  return GetPlans().GetBasePlanInstructionTracer()->StepBack(num_statements);
+}
+
+Status Thread::StepBackInstruction(std::size_t num_instructions) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      StepBackInstruction(num_instructions);
+}
+
+Status Thread::StepBackUntilAddress(lldb::addr_t address) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      StepBackUntilAddress(address);
+}
+
+Status Thread::StepBackUntilLine(uint32_t line) {
+  return GetPlans().GetBasePlanInstructionTracer()->StepBackUntilLine(line);
+}
+
+Status Thread::StepBackUntilOutOfFunction() {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      StepBackUntilOutOfFunction();
+}
+
+Status Thread::StepBackUntilStart() {
+  return GetPlans().GetBasePlanInstructionTracer()->StepBackUntilStart();
+}
+
+Status Thread::ReverseContinue(Stream &canonical_breakpoint_id) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      ReverseContinue(canonical_breakpoint_id);
+}
+
+Status Thread::Replay(std::size_t num_statements) {
+  return GetPlans().GetBasePlanInstructionTracer()->Replay(num_statements);
+}
+
+Status Thread::ReplayInstruction(std::size_t num_instructions) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      ReplayInstruction(num_instructions);
+}
+
+Status Thread::ReplayUntilAddress(lldb::addr_t address) {
+  return GetPlans().GetBasePlanInstructionTracer()->ReplayUntilAddress(address);
+}
+
+Status Thread::ReplayUntilLine(uint32_t line) {
+  return GetPlans().GetBasePlanInstructionTracer()->ReplayUntilLine(line);
+}
+
+Status Thread::ReplayUntilOutOfFunction() {
+  return GetPlans().GetBasePlanInstructionTracer()->ReplayUntilOutOfFunction();
+}
+
+Status Thread::ReplayUntilEnd() {
+  return GetPlans().GetBasePlanInstructionTracer()->ReplayUntilEnd();
+}
+
+Status Thread::ReplayContinue(Stream &canonical_breakpoint_id) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      ReplayContinue(canonical_breakpoint_id);
+}
+
+bool Thread::IsStackFrameStateEmulated() {
+  return GetPlans().GetBasePlanInstructionTracer()->IsStackFrameStateEmulated();
+}
+
+const RegisterContext::SavedRegisterValues &
+Thread::GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      GetRecordedRegisterValuesForStackFrame(frame_idx);
+}
+
+Thread::TracepointID Thread::GetCurrentTracepointID() {
+  return GetPlans().GetBasePlanInstructionTracer()->GetCurrentTracepointID();
+}
+
+Status Thread::JumpToTracepoint(TracepointID destination) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      JumpToTracepoint(destination);
+}
+
+Status Thread::ListRegisterWriteLocations(Stream &stream,
+                                          llvm::StringRef reg_name,
+                                          std::size_t num_locs,
+                                          TracedWriteTiming write_timing) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      ListRegisterWriteLocations(stream, reg_name, num_locs, write_timing);
+}
+
+Status Thread::ListVariableWriteLocations(Stream &stream,
+                                          llvm::StringRef var_name,
+                                          std::size_t num_locs,
+                                          TracedWriteTiming write_timing) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      ListVariableWriteLocations(stream, var_name, num_locs, write_timing);
+}
+
+Status Thread::ListHeapAddressWriteLocations(Stream &stream,
+                                             lldb::addr_t heap_addr,
+                                             std::size_t num_locs,
+                                             TracedWriteTiming write_timing) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      ListHeapAddressWriteLocations(stream, heap_addr, num_locs, write_timing);
+}
+
+llvm::Expected<Thread::TracingBookmarkID> Thread::CreateTracingBookmark(
+    TracepointID tracepoint_id, llvm::StringRef name) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      CreateBookmark(tracepoint_id, name);
+}
+
+Status Thread::DeleteTracingBookmark(TracingBookmarkID boookmark_id) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      DeleteBookmark(boookmark_id);
+}
+
+llvm::Expected<const Thread::TracingBookmark &>
+Thread::GetTracingBookmark(TracingBookmarkID boookmark_id) {
+  return GetPlans().GetBasePlanInstructionTracer()->GetBookmark(boookmark_id);
+}
+
+llvm::Expected<const Thread::TracingBookmark &>
+Thread::GetTracingBookmarkAtTracepoint(TracepointID tracepoint_id) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      GetBookmarkAtTracepoint(tracepoint_id);
+}
+
+Thread::ΤracingBookmarkList Thread::GetAllTracingBookmarks() {
+  return GetPlans().GetBasePlanInstructionTracer()->GetAllBookmarks();
+}
+
+Status Thread::JumpToTracingBookmark(TracingBookmarkID boookmark_id) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      JumpToBookmark(boookmark_id);
+}
+
+Status Thread::RenameTracingBookmark(TracingBookmarkID boookmark_id,
+                                     llvm::StringRef name) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      RenameBookmark(boookmark_id, name);
+}
+
+Status Thread::MoveTracingBookmark(TracingBookmarkID boookmark_id,
+                                   TracepointID new_tracepoint_id) {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      MoveBookmark(boookmark_id, new_tracepoint_id);
 }
 
 ValueObjectSP Thread::GetCurrentException() {

@@ -50,9 +50,22 @@ public:
 
   void ThreadDestroyed(Thread *thread);
 
-  void EnableTracer(bool value, bool single_stepping);
+  void EnableTracing();
+  void DisableTracing();
+  void SuspendTracing(lldb::TracingToken token);
+  void ResumeTracing(lldb::TracingToken token);
+
+  bool TracingEnabled();
+  bool TracingDisabled();
+  bool TracingSuspended();
+
+  void EnableSingleStepping();
+  void DisableSingleStepping();
+  bool SingleSteppingEnabled();
 
   void SetTracer(lldb::ThreadPlanTracerSP &tracer_sp);
+
+  ThreadPlanInstructionTracer *GetBasePlanInstructionTracer();
 
   void PushPlan(lldb::ThreadPlanSP new_plan_sp);
 
@@ -101,6 +114,8 @@ private:
   void PrintOneStack(Stream &s, llvm::StringRef stack_name,
                      const PlanStack &stack, lldb::DescriptionLevel desc_level,
                      bool include_internal) const;
+
+  ThreadPlanTracer *GetBasePlanTracer();
 
   PlanStack m_plans;           ///< The stack of plans this thread is executing.
   PlanStack m_completed_plans; ///< Plans that have been completed by this

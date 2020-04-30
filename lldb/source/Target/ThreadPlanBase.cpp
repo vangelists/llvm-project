@@ -26,20 +26,21 @@ using namespace lldb_private;
 // do.
 // FIXME: The "signal handling" policies should probably go here.
 
-ThreadPlanBase::ThreadPlanBase(Thread &thread)
+ThreadPlanBase::ThreadPlanBase(Thread &thread, bool use_for_tracing)
     : ThreadPlan(ThreadPlan::eKindBase, "base plan", thread, eVoteYes,
                  eVoteNoOpinion) {
-// Set the tracer to a default tracer.
-// FIXME: need to add a thread settings variable to pix various tracers...
-#define THREAD_PLAN_USE_ASSEMBLY_TRACER 1
-
-#ifdef THREAD_PLAN_USE_ASSEMBLY_TRACER
-  ThreadPlanTracerSP new_tracer_sp(new ThreadPlanAssemblyTracer(thread));
-#else
-  ThreadPlanTracerSP new_tracer_sp(new ThreadPlanTracer(m_thread));
-#endif
-  new_tracer_sp->EnableTracing(thread.GetTraceEnabledState());
-  SetThreadPlanTracer(new_tracer_sp);
+  if (use_for_tracing) {
+    constexpr auto tracer_type = ThreadPlan::GetThreadPlanTracerType();
+    // Set the tracer to a default tracer.
+    // FIXME: need to add a thread settings variable to pick various tracers...
+    if constexpr (tracer_type == ThreadPlanTracer::Type::eAssembly) {
+      SetThreadPlanTracer(std::make_shared<ThreadPlanAssemblyTracer>(thread));
+    } else if constexpr (tracer_type == ThreadPlanTracer::Type::eInstruction) {
+      SetThreadPlanTracer(std::make_shared<ThreadPlanInstructionTracer>(thread));
+    } else {
+      SetThreadPlanTracer(std::make_shared<ThreadPlanTracer>(thread));
+    }
+  }
   SetIsMasterPlan(true);
 }
 
@@ -161,6 +162,9 @@ bool ThreadPlanBase::ShouldStop(Event *event_ptr) {
           m_stop_vote = eVoteNo;
       }
       return false;
+
+    case eStopReasonTrace:
+      return TracerExplainsStop();
 
     default:
       return true;
