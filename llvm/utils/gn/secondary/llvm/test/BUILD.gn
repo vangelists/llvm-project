@@ -64,7 +64,7 @@ write_lit_config("lit_site_cfg") {
     "LLVM_NATIVE_ARCH=$native_target",
     "LLVM_USE_INTEL_JITEVENTS=0",
     "LLVM_USE_SANITIZER=",
-    "PYTHON_EXECUTABLE=$python_path",
+    "Python3_EXECUTABLE=$python_path",
     "TARGETS_TO_BUILD=$llvm_targets_to_build_string",
     "TARGET_TRIPLE=$llvm_target_triple",
 
@@ -289,11 +289,6 @@ action("check-llvm") {
   }
   args = [
     "-sv",
-    "--param",
-    "llvm_site_config=" + rebase_path(llvm_lit_site_cfg_file, root_out_dir),
-    "--param",
-    "llvm_unit_site_config=" +
-        rebase_path(llvm_lit_unit_site_cfg_file, root_out_dir),
     rebase_path(".", root_out_dir),
   ]
   outputs = [ "$target_gen_dir/run-lit" ]  # Non-existing, so that ninja runs it

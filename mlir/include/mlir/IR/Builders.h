@@ -111,6 +111,7 @@ public:
   IntegerAttr getI16IntegerAttr(int16_t value);
   IntegerAttr getI32IntegerAttr(int32_t value);
   IntegerAttr getI64IntegerAttr(int64_t value);
+  IntegerAttr getIndexAttr(int64_t value);
 
   /// Signed and unsigned integer attribute getters.
   IntegerAttr getSI32IntegerAttr(int32_t value);
@@ -194,7 +195,7 @@ public:
   }
 
   /// Create a builder and set the insertion point to before the first operation
-  /// in the block but still inside th block.
+  /// in the block but still inside the block.
   static OpBuilder atBlockBegin(Block *block) {
     return OpBuilder(block, block->begin());
   }
@@ -203,6 +204,14 @@ public:
   /// in the block but still inside the block.
   static OpBuilder atBlockEnd(Block *block) {
     return OpBuilder(block, block->end());
+  }
+
+  /// Create a builder and set the insertion point to before the block
+  /// terminator.
+  static OpBuilder atBlockTerminator(Block *block) {
+    auto *terminator = block->getTerminator();
+    assert(terminator != nullptr && "the block has no terminator");
+    return OpBuilder(block, terminator->getIterator());
   }
 
   /// This class represents a saved insertion point.
@@ -298,13 +307,15 @@ public:
   /// Insert the given operation at the current insertion point and return it.
   virtual Operation *insert(Operation *op);
 
-  /// Add new block and set the insertion point to the end of it. The block is
-  /// inserted at the provided insertion point of 'parent'.
-  Block *createBlock(Region *parent, Region::iterator insertPt = {});
+  /// Add new block with 'argTypes' arguments and set the insertion point to the
+  /// end of it. The block is inserted at the provided insertion point of
+  /// 'parent'.
+  virtual Block *createBlock(Region *parent, Region::iterator insertPt = {},
+                             TypeRange argTypes = llvm::None);
 
-  /// Add new block and set the insertion point to the end of it. The block is
-  /// placed before 'insertBefore'.
-  Block *createBlock(Block *insertBefore);
+  /// Add new block with 'argTypes' arguments and set the insertion point to the
+  /// end of it. The block is placed before 'insertBefore'.
+  Block *createBlock(Block *insertBefore, TypeRange argTypes = llvm::None);
 
   /// Returns the current block of the builder.
   Block *getBlock() const { return block; }
@@ -316,10 +327,10 @@ public:
   template <typename OpTy, typename... Args>
   OpTy create(Location location, Args &&... args) {
     OperationState state(location, OpTy::getOperationName());
-    OpTy::build(this, state, std::forward<Args>(args)...);
+    OpTy::build(*this, state, std::forward<Args>(args)...);
     auto *op = createOperation(state);
     auto result = dyn_cast<OpTy>(op);
-    assert(result && "Builder didn't return the right type");
+    assert(result && "builder didn't return the right type");
     return result;
   }
 
@@ -332,7 +343,7 @@ public:
     // Create the operation without using 'createOperation' as we don't want to
     // insert it yet.
     OperationState state(location, OpTy::getOperationName());
-    OpTy::build(this, state, std::forward<Args>(args)...);
+    OpTy::build(*this, state, std::forward<Args>(args)...);
     Operation *op = Operation::create(state);
 
     // Fold the operation. If successful destroy it, otherwise insert it.

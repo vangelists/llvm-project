@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "UnwrappedLineParser.h"
+#include "FormatToken.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1334,7 +1335,7 @@ void UnwrappedLineParser::parseStructuralElement() {
         parseChildBlock();
       break;
     case tok::l_brace:
-      if (!tryToParseBracedList()) {
+      if (!tryToParsePropertyAccessor() && !tryToParseBracedList()) {
         // A block outside of parentheses must be the last part of a
         // structural element.
         // FIXME: Figure out cases where this is not true, and add projections
@@ -1485,6 +1486,94 @@ void UnwrappedLineParser::parseStructuralElement() {
       break;
     }
   } while (!eof());
+}
+
+bool UnwrappedLineParser::tryToParsePropertyAccessor() {
+  assert(FormatTok->is(tok::l_brace));
+  if (!Style.isCSharp())
+    return false;
+  // See if it's a property accessor.
+  if (FormatTok->Previous->isNot(tok::identifier))
+    return false;
+
+  // See if we are inside a property accessor.
+  //
+  // Record the current tokenPosition so that we can advance and
+  // reset the current token. `Next` is not set yet so we need
+  // another way to advance along the token stream.
+  unsigned int StoredPosition = Tokens->getPosition();
+  FormatToken *Tok = Tokens->getNextToken();
+
+  // A trivial property accessor is of the form:
+  // { [ACCESS_SPECIFIER] [get]; [ACCESS_SPECIFIER] [set] }
+  // Track these as they do not require line breaks to be introduced.
+  bool HasGetOrSet = false;
+  bool IsTrivialPropertyAccessor = true;
+  while (!eof()) {
+    if (Tok->isOneOf(tok::semi, tok::kw_public, tok::kw_private,
+                     tok::kw_protected, Keywords.kw_internal, Keywords.kw_get,
+                     Keywords.kw_set)) {
+      if (Tok->isOneOf(Keywords.kw_get, Keywords.kw_set))
+        HasGetOrSet = true;
+      Tok = Tokens->getNextToken();
+      continue;
+    }
+    if (Tok->isNot(tok::r_brace))
+      IsTrivialPropertyAccessor = false;
+    break;
+  }
+
+  if (!HasGetOrSet) {
+    Tokens->setPosition(StoredPosition);
+    return false;
+  }
+
+  // Try to parse the property accessor:
+  // https://docs.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/properties
+  Tokens->setPosition(StoredPosition);
+  nextToken();
+  do {
+    switch (FormatTok->Tok.getKind()) {
+    case tok::r_brace:
+      nextToken();
+      if (FormatTok->is(tok::equal)) {
+        while (!eof() && FormatTok->isNot(tok::semi))
+          nextToken();
+        nextToken();
+      }
+      addUnwrappedLine();
+      return true;
+    case tok::l_brace:
+      ++Line->Level;
+      parseBlock(/*MustBeDeclaration=*/true);
+      addUnwrappedLine();
+      --Line->Level;
+      break;
+    case tok::equal:
+      if (FormatTok->is(TT_JsFatArrow)) {
+        ++Line->Level;
+        do {
+          nextToken();
+        } while (!eof() && FormatTok->isNot(tok::semi));
+        nextToken();
+        addUnwrappedLine();
+        --Line->Level;
+        break;
+      }
+      nextToken();
+      break;
+    default:
+      if (FormatTok->isOneOf(Keywords.kw_get, Keywords.kw_set) &&
+          !IsTrivialPropertyAccessor) {
+        // Non-trivial get/set needs to be on its own line.
+        addUnwrappedLine();
+      }
+      nextToken();
+    }
+  } while (!eof());
+
+  // Unreachable for well-formed code (paired '{' and '}').
+  return true;
 }
 
 bool UnwrappedLineParser::tryToParseLambda() {
@@ -1657,7 +1746,7 @@ bool UnwrappedLineParser::tryToParseBracedList() {
 bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
                                           tok::TokenKind ClosingBraceKind) {
   bool HasError = false;
-  
+
   // FIXME: Once we have an expression parser in the UnwrappedLineParser,
   // replace this by using parseAssigmentExpression() inside.
   do {

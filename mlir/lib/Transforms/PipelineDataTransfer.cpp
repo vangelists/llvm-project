@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PassDetail.h"
 #include "mlir/Transforms/Passes.h"
 
 #include "mlir/Analysis/AffineAnalysis.h"
@@ -17,7 +18,6 @@
 #include "mlir/Analysis/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/LoopUtils.h"
 #include "mlir/Transforms/Utils.h"
 #include "llvm/ADT/DenseMap.h"
@@ -28,11 +28,8 @@
 using namespace mlir;
 
 namespace {
-struct PipelineDataTransfer : public FunctionPass<PipelineDataTransfer> {
-/// Include the generated pass utilities.
-#define GEN_PASS_AffinePipelineDataTransfer
-#include "mlir/Transforms/Passes.h.inc"
-
+struct PipelineDataTransfer
+    : public AffinePipelineDataTransferBase<PipelineDataTransfer> {
   void runOnFunction() override;
   void runOnAffineForOp(AffineForOp forOp);
 
@@ -43,7 +40,7 @@ struct PipelineDataTransfer : public FunctionPass<PipelineDataTransfer> {
 
 /// Creates a pass to pipeline explicit movement of data across levels of the
 /// memory hierarchy.
-std::unique_ptr<OpPassBase<FuncOp>> mlir::createPipelineDataTransferPass() {
+std::unique_ptr<OperationPass<FuncOp>> mlir::createPipelineDataTransferPass() {
   return std::make_unique<PipelineDataTransfer>();
 }
 
@@ -101,8 +98,8 @@ static bool doubleBuffer(Value oldMemRef, AffineForOp forOp) {
   // Create 'iv mod 2' value to index the leading dimension.
   auto d0 = bInner.getAffineDimExpr(0);
   int64_t step = forOp.getStep();
-  auto modTwoMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
-                                  {d0.floorDiv(step) % 2});
+  auto modTwoMap =
+      AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0, d0.floorDiv(step) % 2);
   auto ivModTwoOp = bInner.create<AffineApplyOp>(forOp.getLoc(), modTwoMap,
                                                  forOp.getInductionVar());
 

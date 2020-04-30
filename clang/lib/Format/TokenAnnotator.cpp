@@ -395,7 +395,7 @@ private:
 
     if (!AttrTok)
       return false;
-    
+
     // Allow an attribute to be the only content of a file.
     AttrTok = AttrTok->Next;
     if (!AttrTok)
@@ -1522,9 +1522,11 @@ private:
     if (Style.Language == FormatStyle::LK_JavaScript) {
       if (Current.is(tok::exclaim)) {
         if (Current.Previous &&
-            (Keywords.IsJavaScriptIdentifier(*Current.Previous) ||
-             Current.Previous->isOneOf(tok::kw_namespace, tok::r_paren,
-                                       tok::r_square, tok::r_brace) ||
+            (Keywords.IsJavaScriptIdentifier(
+                 *Current.Previous, /* AcceptIdentifierName= */ true) ||
+             Current.Previous->isOneOf(
+                 tok::kw_namespace, tok::r_paren, tok::r_square, tok::r_brace,
+                 Keywords.kw_type, Keywords.kw_get, Keywords.kw_set) ||
              Current.Previous->Tok.isLiteral())) {
           Current.Type = TT_JsNonNullAssertion;
           return;
@@ -1771,6 +1773,10 @@ private:
     }
 
     if (Tok.Next->is(tok::question))
+      return false;
+
+    // `foreach((A a, B b) in someList)` should not be seen as a cast.
+    if (Tok.Next->is(Keywords.kw_in) && Style.isCSharp())
       return false;
 
     // Functions which end with decorations like volatile, noexcept are unlikely
@@ -2831,9 +2837,10 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
     //   operator std::Foo*()
     //   operator C<T>::D<U>*()
     // dependent on PointerAlignment style.
-    if (Previous && (Previous->endsSequence(tok::kw_operator) ||
-       Previous->endsSequence(tok::kw_const, tok::kw_operator) ||
-       Previous->endsSequence(tok::kw_volatile, tok::kw_operator)))
+    if (Previous &&
+        (Previous->endsSequence(tok::kw_operator) ||
+         Previous->endsSequence(tok::kw_const, tok::kw_operator) ||
+         Previous->endsSequence(tok::kw_volatile, tok::kw_operator)))
       return (Style.PointerAlignment != FormatStyle::PAS_Left);
   }
   const auto SpaceRequiredForArrayInitializerLSquare =
@@ -3046,6 +3053,10 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
     if (Left.is(TT_CSharpNullConditionalLSquare))
       return Style.SpacesInSquareBrackets;
 
+    // space after var in `var (key, value)`
+    if (Left.is(Keywords.kw_var) && Right.is(tok::l_paren))
+      return true;
+
     // space between keywords and paren e.g. "using ("
     if (Right.is(tok::l_paren))
       if (Left.isOneOf(tok::kw_using, Keywords.kw_async, Keywords.kw_when))
@@ -3071,7 +3082,9 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
       return false;
     // In tagged template literals ("html`bar baz`"), there is no space between
     // the tag identifier and the template string.
-    if (Keywords.IsJavaScriptIdentifier(Left) && Right.is(TT_TemplateString))
+    if (Keywords.IsJavaScriptIdentifier(Left,
+                                        /* AcceptIdentifierName= */ false) &&
+        Right.is(TT_TemplateString))
       return false;
     if (Right.is(tok::star) &&
         Left.isOneOf(Keywords.kw_function, Keywords.kw_yield))
@@ -3317,22 +3330,20 @@ static bool isOneChildWithoutMustBreakBefore(const FormatToken &Tok) {
   if (Tok.Children.size() != 1)
     return false;
   FormatToken *curElt = Tok.Children[0]->First;
-    while (curElt) {
-      if (curElt->MustBreakBefore)
-        return false;
-      curElt = curElt->Next;
-    }
+  while (curElt) {
+    if (curElt->MustBreakBefore)
+      return false;
+    curElt = curElt->Next;
+  }
   return true;
 }
-static bool
-isAllmanLambdaBrace(const FormatToken &Tok) {
+static bool isAllmanLambdaBrace(const FormatToken &Tok) {
   return (Tok.is(tok::l_brace) && Tok.BlockKind == BK_Block &&
-      !Tok.isOneOf(TT_ObjCBlockLBrace, TT_DictLiteral));
+          !Tok.isOneOf(TT_ObjCBlockLBrace, TT_DictLiteral));
 }
 
-static bool
-isAllmanBraceIncludedBreakableLambda(const FormatToken &Tok,
-                            FormatStyle::ShortLambdaStyle ShortLambdaOption) {
+static bool isAllmanBraceIncludedBreakableLambda(
+    const FormatToken &Tok, FormatStyle::ShortLambdaStyle ShortLambdaOption) {
   if (!isAllmanLambdaBrace(Tok))
     return false;
 
@@ -3489,7 +3500,7 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
   if (Style.BraceWrapping.BeforeLambdaBody &&
       (isAllmanBraceIncludedBreakableLambda(Left, ShortLambdaOption) ||
        isAllmanBraceIncludedBreakableLambda(Right, ShortLambdaOption))) {
-      return true;
+    return true;
   }
 
   if (isAllmanBrace(Left) || isAllmanBrace(Right))

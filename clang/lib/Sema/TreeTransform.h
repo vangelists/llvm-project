@@ -730,10 +730,10 @@ public:
 #define ABSTRACT_STMT(Stmt)
 #include "clang/AST/StmtNodes.inc"
 
-#define OPENMP_CLAUSE(Name, Class)                        \
+#define OMP_CLAUSE_CLASS(Enum, Str, Class)                                           \
   LLVM_ATTRIBUTE_NOINLINE \
   OMPClause *Transform ## Class(Class *S);
-#include "clang/Basic/OpenMPKinds.def"
+#include "llvm/Frontend/OpenMP/OMPKinds.def"
 
   /// Build a new qualified type given its unqualified type and type location.
   ///
@@ -1182,6 +1182,14 @@ public:
   /// Build a new pipe type given its value type.
   QualType RebuildPipeType(QualType ValueType, SourceLocation KWLoc,
                            bool isReadPipe);
+
+   /// Build an extended int given its value type.
+  QualType RebuildExtIntType(bool IsUnsigned, unsigned NumBits,
+                             SourceLocation Loc);
+
+  /// Build a dependent extended int given its value type.
+  QualType RebuildDependentExtIntType(bool IsUnsigned, Expr *NumBitsExpr,
+                                      SourceLocation Loc);
 
   /// Build a new template name given a nested name specifier, a flag
   /// indicating whether the "template" keyword was provided, and the template
@@ -2411,8 +2419,8 @@ public:
                                    MultiExprArg Args,
                                    SourceLocation RParenLoc,
                                    Expr *ExecConfig = nullptr) {
-    return getSema().BuildCallExpr(/*Scope=*/nullptr, Callee, LParenLoc, Args,
-                                   RParenLoc, ExecConfig);
+    return getSema().ActOnCallExpr(
+        /*Scope=*/nullptr, Callee, LParenLoc, Args, RParenLoc, ExecConfig);
   }
 
   /// Build a new member access expression.
@@ -2832,24 +2840,19 @@ public:
   ///
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXUuidofExpr(QualType TypeInfoType,
-                                        SourceLocation TypeidLoc,
-                                        TypeSourceInfo *Operand,
-                                        SourceLocation RParenLoc) {
-    return getSema().BuildCXXUuidof(TypeInfoType, TypeidLoc, Operand,
-                                    RParenLoc);
+  ExprResult RebuildCXXUuidofExpr(QualType Type, SourceLocation TypeidLoc,
+                                  TypeSourceInfo *Operand,
+                                  SourceLocation RParenLoc) {
+    return getSema().BuildCXXUuidof(Type, TypeidLoc, Operand, RParenLoc);
   }
 
   /// Build a new C++ __uuidof(expr) expression.
   ///
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXUuidofExpr(QualType TypeInfoType,
-                                        SourceLocation TypeidLoc,
-                                        Expr *Operand,
-                                        SourceLocation RParenLoc) {
-    return getSema().BuildCXXUuidof(TypeInfoType, TypeidLoc, Operand,
-                                    RParenLoc);
+  ExprResult RebuildCXXUuidofExpr(QualType Type, SourceLocation TypeidLoc,
+                                  Expr *Operand, SourceLocation RParenLoc) {
+    return getSema().BuildCXXUuidof(Type, TypeidLoc, Operand, RParenLoc);
   }
 
   /// Build a new C++ "this" expression.
@@ -3028,9 +3031,14 @@ public:
                                      bool RequiresZeroInit,
                              CXXConstructExpr::ConstructionKind ConstructKind,
                                      SourceRange ParenRange) {
+    // Reconstruct the constructor we originally found, which might be
+    // different if this is a call to an inherited constructor.
+    CXXConstructorDecl *FoundCtor = Constructor;
+    if (Constructor->isInheritingConstructor())
+      FoundCtor = Constructor->getInheritedConstructor().getConstructor();
+
     SmallVector<Expr*, 8> ConvertedArgs;
-    if (getSema().CompleteConstructorCall(Constructor, Args, Loc,
-                                          ConvertedArgs))
+    if (getSema().CompleteConstructorCall(FoundCtor, Args, Loc, ConvertedArgs))
       return ExprError();
 
     return getSema().BuildCXXConstructExpr(Loc, T, Constructor,
@@ -3597,10 +3605,10 @@ OMPClause *TreeTransform<Derived>::TransformOMPClause(OMPClause *S) {
   switch (S->getClauseKind()) {
   default: break;
   // Transform individual clause nodes
-#define OPENMP_CLAUSE(Name, Class)                                             \
-  case OMPC_ ## Name :                                                         \
+#define OMP_CLAUSE_CLASS(Enum, Str, Class) \
+  case Enum:                                                                   \
     return getDerived().Transform ## Class(cast<Class>(S));
-#include "clang/Basic/OpenMPKinds.def"
+#include "llvm/Frontend/OpenMP/OMPKinds.def"
   }
 
   return S;
@@ -6117,6 +6125,57 @@ QualType TreeTransform<Derived>::TransformPipeType(TypeLocBuilder &TLB,
   PipeTypeLoc NewTL = TLB.push<PipeTypeLoc>(Result);
   NewTL.setKWLoc(TL.getKWLoc());
 
+  return Result;
+}
+
+template <typename Derived>
+QualType TreeTransform<Derived>::TransformExtIntType(TypeLocBuilder &TLB,
+                                                     ExtIntTypeLoc TL) {
+  const ExtIntType *EIT = TL.getTypePtr();
+  QualType Result = TL.getType();
+
+  if (getDerived().AlwaysRebuild()) {
+    Result = getDerived().RebuildExtIntType(EIT->isUnsigned(),
+                                            EIT->getNumBits(), TL.getNameLoc());
+    if (Result.isNull())
+      return QualType();
+  }
+
+  ExtIntTypeLoc NewTL = TLB.push<ExtIntTypeLoc>(Result);
+  NewTL.setNameLoc(TL.getNameLoc());
+  return Result;
+}
+
+template <typename Derived>
+QualType TreeTransform<Derived>::TransformDependentExtIntType(
+    TypeLocBuilder &TLB, DependentExtIntTypeLoc TL) {
+  const DependentExtIntType *EIT = TL.getTypePtr();
+
+  EnterExpressionEvaluationContext Unevaluated(
+      SemaRef, Sema::ExpressionEvaluationContext::ConstantEvaluated);
+  ExprResult BitsExpr = getDerived().TransformExpr(EIT->getNumBitsExpr());
+  BitsExpr = SemaRef.ActOnConstantExpression(BitsExpr);
+
+  if (BitsExpr.isInvalid())
+    return QualType();
+
+  QualType Result = TL.getType();
+
+  if (getDerived().AlwaysRebuild() || BitsExpr.get() != EIT->getNumBitsExpr()) {
+    Result = getDerived().RebuildDependentExtIntType(
+        EIT->isUnsigned(), BitsExpr.get(), TL.getNameLoc());
+
+    if (Result.isNull())
+      return QualType();
+  }
+
+  if (isa<DependentExtIntType>(Result)) {
+    DependentExtIntTypeLoc NewTL = TLB.push<DependentExtIntTypeLoc>(Result);
+    NewTL.setNameLoc(TL.getNameLoc());
+  } else {
+    ExtIntTypeLoc NewTL = TLB.push<ExtIntTypeLoc>(Result);
+    NewTL.setNameLoc(TL.getNameLoc());
+  }
   return Result;
 }
 
@@ -10262,8 +10321,12 @@ TreeTransform<Derived>::TransformBinaryOperator(BinaryOperator *E) {
       RHS.get() == E->getRHS())
     return E;
 
+  if (E->isCompoundAssignmentOp())
+    // FPFeatures has already been established from trailing storage
+    return getDerived().RebuildBinaryOperator(
+        E->getOperatorLoc(), E->getOpcode(), LHS.get(), RHS.get());
   Sema::FPFeaturesStateRAII FPFeaturesState(getSema());
-  getSema().FPFeatures = E->getFPFeatures();
+  getSema().CurFPFeatures = E->getFPFeatures(getSema().getLangOpts());
 
   return getDerived().RebuildBinaryOperator(E->getOperatorLoc(), E->getOpcode(),
                                             LHS.get(), RHS.get());
@@ -10317,6 +10380,8 @@ template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCompoundAssignOperator(
                                                       CompoundAssignOperator *E) {
+  Sema::FPFeaturesStateRAII FPFeaturesState(getSema());
+  getSema().CurFPFeatures = E->getFPFeatures(getSema().getLangOpts());
   return getDerived().TransformBinaryOperator(E);
 }
 
@@ -10791,7 +10856,7 @@ TreeTransform<Derived>::TransformCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
     return SemaRef.MaybeBindToTemporary(E);
 
   Sema::FPFeaturesStateRAII FPFeaturesState(getSema());
-  getSema().FPFeatures = E->getFPFeatures();
+  getSema().CurFPFeatures = E->getFPFeatures();
 
   return getDerived().RebuildCXXOperatorCallExpr(E->getOperator(),
                                                  E->getOperatorLoc(),
@@ -12153,19 +12218,6 @@ TreeTransform<Derived>::TransformLambdaExpr(LambdaExpr *E) {
       NewTrailingRequiresClause.get());
 
   LSI->CallOperator = NewCallOperator;
-
-  for (unsigned I = 0, NumParams = NewCallOperator->getNumParams();
-       I != NumParams; ++I) {
-    auto *P = NewCallOperator->getParamDecl(I);
-    if (P->hasUninstantiatedDefaultArg()) {
-      EnterExpressionEvaluationContext Eval(
-          getSema(),
-          Sema::ExpressionEvaluationContext::PotentiallyEvaluatedIfUsed, P);
-      ExprResult R = getDerived().TransformExpr(
-          E->getCallOperator()->getParamDecl(I)->getDefaultArg());
-      P->setDefaultArg(R.get());
-    }
-  }
 
   getDerived().transformAttrs(E->getCallOperator(), NewCallOperator);
   getDerived().transformedLocalDecl(E->getCallOperator(), {NewCallOperator});
@@ -13774,6 +13826,23 @@ QualType TreeTransform<Derived>::RebuildPipeType(QualType ValueType,
                                                  bool isReadPipe) {
   return isReadPipe ? SemaRef.BuildReadPipeType(ValueType, KWLoc)
                     : SemaRef.BuildWritePipeType(ValueType, KWLoc);
+}
+
+template <typename Derived>
+QualType TreeTransform<Derived>::RebuildExtIntType(bool IsUnsigned,
+                                                   unsigned NumBits,
+                                                   SourceLocation Loc) {
+  llvm::APInt NumBitsAP(SemaRef.Context.getIntWidth(SemaRef.Context.IntTy),
+                        NumBits, true);
+  IntegerLiteral *Bits = IntegerLiteral::Create(SemaRef.Context, NumBitsAP,
+                                                SemaRef.Context.IntTy, Loc);
+  return SemaRef.BuildExtIntType(IsUnsigned, Bits, Loc);
+}
+
+template <typename Derived>
+QualType TreeTransform<Derived>::RebuildDependentExtIntType(
+    bool IsUnsigned, Expr *NumBitsExpr, SourceLocation Loc) {
+  return SemaRef.BuildExtIntType(IsUnsigned, NumBitsExpr, Loc);
 }
 
 template<typename Derived>

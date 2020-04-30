@@ -534,8 +534,8 @@ private:
   bool TraverseOMPExecutableDirective(OMPExecutableDirective *S);
   bool TraverseOMPLoopDirective(OMPLoopDirective *S);
   bool TraverseOMPClause(OMPClause *C);
-#define OPENMP_CLAUSE(Name, Class) bool Visit##Class(Class *C);
-#include "clang/Basic/OpenMPKinds.def"
+#define OMP_CLAUSE_CLASS(Enum, Str, Class) bool Visit##Class(Class *C);
+#include "llvm/Frontend/OpenMP/OMPKinds.def"
   /// Process clauses with list of variables.
   template <typename T> bool VisitOMPClauseList(T *Node);
   /// Process clauses with pre-initis.
@@ -1115,6 +1115,10 @@ DEF_TRAVERSE_TYPE(AtomicType, { TRY_TO(TraverseType(T->getValueType())); })
 
 DEF_TRAVERSE_TYPE(PipeType, { TRY_TO(TraverseType(T->getElementType())); })
 
+DEF_TRAVERSE_TYPE(ExtIntType, {})
+DEF_TRAVERSE_TYPE(DependentExtIntType,
+                  { TRY_TO(TraverseStmt(T->getNumBitsExpr())); })
+
 #undef DEF_TRAVERSE_TYPE
 
 // ----------------- TypeLoc traversal -----------------
@@ -1384,6 +1388,11 @@ DEF_TRAVERSE_TYPELOC(ObjCObjectPointerType,
 DEF_TRAVERSE_TYPELOC(AtomicType, { TRY_TO(TraverseTypeLoc(TL.getValueLoc())); })
 
 DEF_TRAVERSE_TYPELOC(PipeType, { TRY_TO(TraverseTypeLoc(TL.getValueLoc())); })
+
+DEF_TRAVERSE_TYPELOC(ExtIntType, {})
+DEF_TRAVERSE_TYPELOC(DependentExtIntType, {
+  TRY_TO(TraverseStmt(TL.getTypePtr()->getNumBitsExpr()));
+})
 
 #undef DEF_TRAVERSE_TYPELOC
 
@@ -1992,6 +2001,8 @@ DEF_TRAVERSE_DECL(BindingDecl, {
 })
 
 DEF_TRAVERSE_DECL(MSPropertyDecl, { TRY_TO(TraverseDeclaratorHelper(D)); })
+
+DEF_TRAVERSE_DECL(MSGuidDecl, {})
 
 DEF_TRAVERSE_DECL(FieldDecl, {
   TRY_TO(TraverseDeclaratorHelper(D));
@@ -2957,17 +2968,14 @@ bool RecursiveASTVisitor<Derived>::TraverseOMPClause(OMPClause *C) {
   if (!C)
     return true;
   switch (C->getClauseKind()) {
-#define OPENMP_CLAUSE(Name, Class)                                             \
-  case OMPC_##Name:                                                            \
+#define OMP_CLAUSE_CLASS(Enum, Str, Class)                                     \
+  case llvm::omp::Clause::Enum:                                                \
     TRY_TO(Visit##Class(static_cast<Class *>(C)));                             \
     break;
-#include "clang/Basic/OpenMPKinds.def"
-  case OMPC_threadprivate:
-  case OMPC_uniform:
-  case OMPC_device_type:
-  case OMPC_match:
-  case OMPC_unknown:
+#define OMP_CLAUSE_NO_CLASS(Enum, Str)                                         \
+  case llvm::omp::Clause::Enum:                                                \
     break;
+#include "llvm/Frontend/OpenMP/OMPKinds.def"
   }
   return true;
 }

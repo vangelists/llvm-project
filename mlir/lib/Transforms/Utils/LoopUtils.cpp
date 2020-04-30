@@ -23,6 +23,7 @@
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Function.h"
 #include "mlir/IR/IntegerSet.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "mlir/Transforms/Utils.h"
 #include "llvm/ADT/DenseMap.h"
@@ -102,7 +103,8 @@ static void getCleanupLoopLowerBound(AffineForOp forOp, unsigned unrollFactor,
   operands.clear();
   operands.push_back(lb);
   operands.append(bumpValues.begin(), bumpValues.end());
-  map = AffineMap::get(1 + tripCountMap.getNumResults(), 0, newUbExprs);
+  map = AffineMap::get(1 + tripCountMap.getNumResults(), 0, newUbExprs,
+                       b.getContext());
   // Simplify the map + operands.
   fullyComposeAffineMapAndOperands(&map, &operands);
   map = simplifyAffineMap(map);
@@ -190,7 +192,7 @@ static AffineForOp generateShiftedLoop(
 
   BlockAndValueMapping operandMap;
 
-  OpBuilder bodyBuilder = loopChunk.getBodyBuilder();
+  auto bodyBuilder = OpBuilder::atBlockTerminator(loopChunk.getBody());
   for (auto it = opGroupQueue.begin() + offset, e = opGroupQueue.end(); it != e;
        ++it) {
     uint64_t shift = it->first;
@@ -312,9 +314,19 @@ LogicalResult mlir::affineForOpBodySkew(AffineForOp forOp,
                                   opGroupQueue, /*offset=*/0, forOp, b);
         lbShift = d * step;
       }
-      if (!prologue && res)
-        prologue = res;
-      epilogue = res;
+
+      if (res) {
+        // Simplify/canonicalize the affine.for.
+        OwningRewritePatternList patterns;
+        AffineForOp::getCanonicalizationPatterns(patterns, res.getContext());
+        bool erased;
+        applyOpPatternsAndFold(res, std::move(patterns), &erased);
+
+        if (!erased && !prologue)
+          prologue = res;
+        if (!erased)
+          epilogue = res;
+      }
     } else {
       // Start of first interval.
       lbShift = d * step;
@@ -414,7 +426,7 @@ LogicalResult mlir::loopUnrollByFactor(AffineForOp forOp,
     return promoteIfSingleIteration(forOp);
 
   // Nothing in the loop body other than the terminator.
-  if (has_single_element(forOp.getBody()->getOperations()))
+  if (llvm::hasSingleElement(forOp.getBody()->getOperations()))
     return success();
 
   // Loops where the lower bound is a max expression isn't supported for
@@ -458,7 +470,7 @@ LogicalResult mlir::loopUnrollByFactor(AffineForOp forOp,
 
   // Builder to insert unrolled bodies just before the terminator of the body of
   // 'forOp'.
-  OpBuilder builder = forOp.getBodyBuilder();
+  auto builder = OpBuilder::atBlockTerminator(forOp.getBody());
 
   // Keep a pointer to the last non-terminator operation in the original block
   // so that we know what to clone (since we are doing this in-place).
@@ -474,7 +486,7 @@ LogicalResult mlir::loopUnrollByFactor(AffineForOp forOp,
     if (!forOpIV.use_empty()) {
       // iv' = iv + 1/2/3...unrollFactor-1;
       auto d0 = builder.getAffineDimExpr(0);
-      auto bumpMap = AffineMap::get(1, 0, {d0 + i * step});
+      auto bumpMap = AffineMap::get(1, 0, d0 + i * step);
       auto ivUnroll =
           builder.create<AffineApplyOp>(forOp.getLoc(), bumpMap, forOpIV);
       operandMap.map(forOpIV, ivUnroll);
@@ -538,7 +550,7 @@ LogicalResult mlir::loopUnrollJamByFactor(AffineForOp forOp,
     return promoteIfSingleIteration(forOp);
 
   // Nothing in the loop body other than the terminator.
-  if (has_single_element(forOp.getBody()->getOperations()))
+  if (llvm::hasSingleElement(forOp.getBody()->getOperations()))
     return success();
 
   // Loops where both lower and upper bounds are multi-result maps won't be
@@ -605,7 +617,7 @@ LogicalResult mlir::loopUnrollJamByFactor(AffineForOp forOp,
       if (!forOpIV.use_empty()) {
         // iv' = iv + i, i = 1 to unrollJamFactor-1.
         auto d0 = builder.getAffineDimExpr(0);
-        auto bumpMap = AffineMap::get(1, 0, {d0 + i * step});
+        auto bumpMap = AffineMap::get(1, 0, d0 + i * step);
         auto ivUnroll =
             builder.create<AffineApplyOp>(forOp.getLoc(), bumpMap, forOpIV);
         operandMap.map(forOpIV, ivUnroll);
@@ -693,16 +705,25 @@ bool mlir::isValidLoopInterchangePermutation(ArrayRef<AffineForOp> loops,
   return checkLoopInterchangeDependences(depCompsVec, loops, loopPermMap);
 }
 
-/// Return true if `loops` is a perfect nest.
-static bool LLVM_ATTRIBUTE_UNUSED isPerfectlyNested(ArrayRef<AffineForOp> loops) {
-  auto outerLoop = loops.front();
+/// Returns true if `loops` is a perfectly nested loop nest, where loops appear
+/// in it from outermost to innermost.
+bool LLVM_ATTRIBUTE_UNUSED
+mlir::isPerfectlyNested(ArrayRef<AffineForOp> loops) {
+  assert(!loops.empty() && "no loops provided");
+
+  // We already know that the block can't be empty.
+  auto hasTwoElements = [](Block *block) {
+    auto secondOpIt = std::next(block->begin());
+    return secondOpIt != block->end() && &*secondOpIt == &block->back();
+  };
+
+  auto enclosingLoop = loops.front();
   for (auto loop : loops.drop_front()) {
     auto parentForOp = dyn_cast<AffineForOp>(loop.getParentOp());
     // parentForOp's body should be just this loop and the terminator.
-    if (parentForOp != outerLoop ||
-        parentForOp.getBody()->getOperations().size() != 2)
+    if (parentForOp != enclosingLoop || !hasTwoElements(parentForOp.getBody()))
       return false;
-    outerLoop = loop;
+    enclosingLoop = loop;
   }
   return true;
 }
@@ -847,7 +868,8 @@ static void augmentMapAndBounds(OpBuilder &b, Value iv, AffineMap *map,
   auto bounds = llvm::to_vector<4>(map->getResults());
   bounds.push_back(b.getAffineDimExpr(map->getNumDims()) + offset);
   operands->insert(operands->begin() + map->getNumDims(), iv);
-  *map = AffineMap::get(map->getNumDims() + 1, map->getNumSymbols(), bounds);
+  *map = AffineMap::get(map->getNumDims() + 1, map->getNumSymbols(), bounds,
+                        b.getContext());
   canonicalizeMapAndOperands(map, operands);
 }
 
@@ -884,7 +906,7 @@ stripmineSink(AffineForOp forOp, uint64_t factor,
   SmallVector<AffineForOp, 8> innerLoops;
   for (auto t : targets) {
     // Insert newForOp before the terminator of `t`.
-    OpBuilder b = t.getBodyBuilder();
+    auto b = OpBuilder::atBlockTerminator(t.getBody());
     auto newForOp = b.create<AffineForOp>(t.getLoc(), lbOperands, lbMap,
                                           ubOperands, ubMap, originalStep);
     auto begin = t.getBody()->begin();
@@ -916,7 +938,7 @@ static Loops stripmineSink(loop::ForOp forOp, Value factor,
     auto nOps = t.getBody()->getOperations().size();
 
     // Insert newForOp before the terminator of `t`.
-    OpBuilder b(t.getBodyBuilder());
+    auto b = OpBuilder::atBlockTerminator((t.getBody()));
     Value stepped = b.create<AddIOp>(t.getLoc(), iv, forOp.step());
     Value less = b.create<CmpIOp>(t.getLoc(), CmpIPredicate::slt,
                                   forOp.upperBound(), stepped);
@@ -1144,17 +1166,6 @@ TileLoops mlir::extractFixedOuterLoops(loop::ForOp rootForOp,
   return tileLoops;
 }
 
-// Replaces all uses of `orig` with `replacement` except if the user is listed
-// in `exceptions`.
-static void
-replaceAllUsesExcept(Value orig, Value replacement,
-                     const SmallPtrSetImpl<Operation *> &exceptions) {
-  for (auto &use : llvm::make_early_inc_range(orig.getUses())) {
-    if (exceptions.count(use.getOwner()) == 0)
-      use.set(replacement);
-  }
-}
-
 /// Return the new lower bound, upper bound, and step in that order. Insert any
 /// additional bounds calculations before the given builder and any additional
 /// conversion back to the original loop induction value inside the given Block.
@@ -1201,7 +1212,7 @@ static LoopParams normalizeLoop(OpBuilder &boundsBuilder,
 
   SmallPtrSet<Operation *, 2> preserve{scaled.getDefiningOp(),
                                        shifted.getDefiningOp()};
-  replaceAllUsesExcept(inductionVar, shifted, preserve);
+  inductionVar.replaceAllUsesExcept(shifted, preserve);
   return {/*lowerBound=*/newLowerBound, /*upperBound=*/newUpperBound,
           /*step=*/newStep};
 }
@@ -1458,58 +1469,87 @@ static void getMultiLevelStrides(const MemRefRegion &region,
 }
 
 /// Generates a point-wise copy from/to `memref' to/from `fastMemRef' and
-/// returns the outermost AffineForOp of the copy loop nest. `memIndicesStart'
-/// holds the lower coordinates of the region in the original memref to copy
-/// in/out. If `copyOut' is true, generates a copy-out; otherwise a copy-in.
-static AffineForOp generatePointWiseCopy(Location loc, Value memref,
-                                         Value fastMemRef,
-                                         AffineMap memAffineMap,
-                                         ArrayRef<Value> memIndicesStart,
-                                         ArrayRef<int64_t> fastBufferShape,
-                                         bool isCopyOut, OpBuilder b) {
-  assert(!memIndicesStart.empty() && "only 1-d or more memrefs");
+/// returns the outermost AffineForOp of the copy loop nest. `lbMaps` and
+/// `ubMaps` along with `lbOperands` and `ubOperands` hold the lower and upper
+/// bound information for the copy loop nest. `fastBufOffsets` contain the
+/// expressions to be subtracted out from the respective copy loop iterators in
+/// order to index the fast buffer. If `copyOut' is true, generates a copy-out;
+/// otherwise a copy-in. Builder `b` should be set to the point the copy nest is
+/// inserted.
+//
+/// The copy-in nest is generated as follows as an example for a 2-d region:
+/// for x = ...
+///   for y = ...
+///     fast_buf[x - offset_x][y - offset_y] = memref[x][y]
+///
+static AffineForOp
+generatePointWiseCopy(Location loc, Value memref, Value fastMemRef,
+                      ArrayRef<AffineMap> lbMaps, ArrayRef<Value> lbOperands,
+                      ArrayRef<AffineMap> ubMaps, ArrayRef<Value> ubOperands,
+                      ArrayRef<AffineExpr> fastBufOffsets, bool isCopyOut,
+                      OpBuilder b) {
+  assert(llvm::all_of(lbMaps, [&](AffineMap lbMap) {
+    return lbMap.getNumInputs() == lbOperands.size();
+  }));
+  assert(llvm::all_of(ubMaps, [&](AffineMap ubMap) {
+    return ubMap.getNumInputs() == ubOperands.size();
+  }));
 
-  // The copy-in nest is generated as follows as an example for a 2-d region:
-  // for x = ...
-  //   for y = ...
-  //     fast_buf[x][y] = buf[mem_x + x][mem_y + y]
+  unsigned rank = memref.getType().cast<MemRefType>().getRank();
+  assert(lbMaps.size() == rank && "wrong number of lb maps");
+  assert(ubMaps.size() == rank && "wrong number of ub maps");
 
-  SmallVector<Value, 4> fastBufIndices, memIndices;
+  SmallVector<Value, 4> memIndices;
+  SmallVector<AffineExpr, 4> fastBufExprs;
+  SmallVector<Value, 4> fastBufMapOperands;
   AffineForOp copyNestRoot;
-  for (unsigned d = 0, e = fastBufferShape.size(); d < e; ++d) {
-    auto forOp = b.create<AffineForOp>(loc, 0, fastBufferShape[d]);
+  SmallVector<AffineApplyOp, 4> mayBeDeadApplys;
+  for (unsigned d = 0; d < rank; ++d) {
+    auto forOp = createCanonicalizedAffineForOp(b, loc, lbOperands, lbMaps[d],
+                                                ubOperands, ubMaps[d]);
     if (d == 0)
       copyNestRoot = forOp;
-    b = forOp.getBodyBuilder();
-    fastBufIndices.push_back(forOp.getInductionVar());
 
-    Value memBase =
-        (memAffineMap == b.getMultiDimIdentityMap(memAffineMap.getNumDims()))
-            ? memIndicesStart[d]
-            : b.create<AffineApplyOp>(
-                  loc,
-                  AffineMap::get(memAffineMap.getNumDims(),
-                                 memAffineMap.getNumSymbols(),
-                                 memAffineMap.getResult(d)),
-                  memIndicesStart);
+    b = OpBuilder::atBlockTerminator(forOp.getBody());
 
-    // Construct the subscript for the slow memref being copied.
-    auto memIndex = b.create<AffineApplyOp>(
-        loc,
-        AffineMap::get(2, 0, b.getAffineDimExpr(0) + b.getAffineDimExpr(1)),
-        ValueRange({memBase, forOp.getInductionVar()}));
-    memIndices.push_back(memIndex);
+    auto fastBufOffsetMap =
+        AffineMap::get(lbOperands.size(), 0, fastBufOffsets[d]);
+    auto offset = b.create<AffineApplyOp>(loc, fastBufOffsetMap, lbOperands);
+
+    // Construct the subscript for the fast memref being copied into/from:
+    // x - offset_x.
+    fastBufExprs.push_back(b.getAffineDimExpr(2 * d + 1) -
+                           b.getAffineDimExpr(2 * d));
+    fastBufMapOperands.push_back(offset);
+    fastBufMapOperands.push_back(forOp.getInductionVar());
+    mayBeDeadApplys.push_back(offset);
+
+    // Subscript for the slow memref being copied.
+    memIndices.push_back(forOp.getInductionVar());
   }
+
+  auto fastBufMap =
+      AffineMap::get(2 * rank, /*symbolCount=*/0, fastBufExprs, b.getContext());
+  fullyComposeAffineMapAndOperands(&fastBufMap, &fastBufMapOperands);
+  fastBufMap = simplifyAffineMap(fastBufMap);
+  canonicalizeMapAndOperands(&fastBufMap, &fastBufMapOperands);
+
+  // Drop any dead affine.applys.
+  for (auto applyOp : mayBeDeadApplys)
+    if (applyOp.use_empty())
+      applyOp.erase();
 
   if (!isCopyOut) {
     // Copy in.
     auto load = b.create<AffineLoadOp>(loc, memref, memIndices);
-    b.create<AffineStoreOp>(loc, load, fastMemRef, fastBufIndices);
+    b.create<AffineStoreOp>(loc, load, fastMemRef, fastBufMap,
+                            fastBufMapOperands);
     return copyNestRoot;
   }
 
   // Copy out.
-  auto load = b.create<AffineLoadOp>(loc, fastMemRef, fastBufIndices);
+  auto load =
+      b.create<AffineLoadOp>(loc, fastMemRef, fastBufMap, fastBufMapOperands);
   b.create<AffineStoreOp>(loc, load, memref, memIndices);
   return copyNestRoot;
 }
@@ -1600,6 +1640,10 @@ static LogicalResult generateCopy(
     return success();
   }
 
+  SmallVector<AffineMap, 4> lbMaps(rank), ubMaps(rank);
+  for (unsigned i = 0; i < rank; ++i)
+    region.getLowerAndUpperBound(i, lbMaps[i], ubMaps[i]);
+
   const FlatAffineConstraints *cst = region.getConstraints();
   // 'regionSymbols' hold values that this memory region is symbolic/parametric
   // on; these typically include loop IVs surrounding the level at which the
@@ -1613,15 +1657,14 @@ static LogicalResult generateCopy(
   // along the corresponding dimension.
 
   // Index start offsets for faster memory buffer relative to the original.
-  SmallVector<AffineExpr, 4> offsets;
-  offsets.reserve(rank);
+  SmallVector<AffineExpr, 4> fastBufOffsets;
+  fastBufOffsets.reserve(rank);
   for (unsigned d = 0; d < rank; d++) {
     assert(lbs[d].size() == cst->getNumCols() - rank && "incorrect bound size");
 
     AffineExpr offset = top.getAffineConstantExpr(0);
-    for (unsigned j = 0, e = cst->getNumCols() - rank - 1; j < e; j++) {
+    for (unsigned j = 0, e = cst->getNumCols() - rank - 1; j < e; j++)
       offset = offset + lbs[d][j] * top.getAffineDimExpr(j);
-    }
     assert(lbDivisors[d] > 0);
     offset =
         (offset + lbs[d][cst->getNumCols() - 1 - rank]).floorDiv(lbDivisors[d]);
@@ -1648,7 +1691,7 @@ static LogicalResult generateCopy(
 
     // Record the offsets since they are needed to remap the memory accesses of
     // the original memref further below.
-    offsets.push_back(offset);
+    fastBufOffsets.push_back(offset);
   }
 
   // The faster memory space buffer.
@@ -1716,9 +1759,11 @@ static LogicalResult generateCopy(
 
   if (!copyOptions.generateDma) {
     // Point-wise copy generation.
-    auto copyNest = generatePointWiseCopy(loc, memref, fastMemRef, memAffineMap,
-                                          memIndices, fastBufferShape,
-                                          /*isCopyOut=*/region.isWrite(), b);
+    auto copyNest =
+        generatePointWiseCopy(loc, memref, fastMemRef, lbMaps,
+                              /*lbOperands=*/regionSymbols, ubMaps,
+                              /*ubOperands=*/regionSymbols, fastBufOffsets,
+                              /*isCopyOut=*/region.isWrite(), b);
 
     // Record this so that we can skip it from yet another copy.
     copyNests.insert(copyNest);
@@ -1790,9 +1835,10 @@ static LogicalResult generateCopy(
     // which the memref region is parametric); then those corresponding to
     // the memref's original indices follow.
     auto dimExpr = b.getAffineDimExpr(regionSymbols.size() + i);
-    remapExprs.push_back(dimExpr - offsets[i]);
+    remapExprs.push_back(dimExpr - fastBufOffsets[i]);
   }
-  auto indexRemap = AffineMap::get(regionSymbols.size() + rank, 0, remapExprs);
+  auto indexRemap = AffineMap::get(regionSymbols.size() + rank, 0, remapExprs,
+                                   b.getContext());
 
   // Record the begin since it may be invalidated by memref replacement.
   Block::iterator prevOfBegin;
@@ -1885,7 +1931,7 @@ uint64_t mlir::affineDataCopyGenerate(Block::iterator begin,
 
   // Copies will be generated for this depth, i.e., symbolic in all loops
   // surrounding the this block range.
-  unsigned copyDepth = getNestingDepth(*begin);
+  unsigned copyDepth = getNestingDepth(&*begin);
 
   LLVM_DEBUG(llvm::dbgs() << "Generating copies at depth " << copyDepth
                           << "\n");
@@ -1925,7 +1971,8 @@ uint64_t mlir::affineDataCopyGenerate(Block::iterator begin,
 
     // Compute the MemRefRegion accessed.
     auto region = std::make_unique<MemRefRegion>(opInst->getLoc());
-    if (failed(region->compute(opInst, copyDepth))) {
+    if (failed(region->compute(opInst, copyDepth, /*sliceState=*/nullptr,
+                               /*addMemRefDimBounds=*/false))) {
       LLVM_DEBUG(llvm::dbgs()
                  << "Error obtaining memory region: semi-affine maps?\n");
       LLVM_DEBUG(llvm::dbgs() << "over-approximating to the entire memref\n");
@@ -2051,7 +2098,7 @@ uint64_t mlir::affineDataCopyGenerate(Block::iterator begin,
   if (totalCopyBuffersSizeInBytes > copyOptions.fastMemCapacityBytes) {
     StringRef str = "Total size of all copy buffers' for this block "
                     "exceeds fast memory capacity\n";
-    block->getParentOp()->emitError(str);
+    block->getParentOp()->emitWarning(str);
   }
 
   return totalCopyBuffersSizeInBytes;
@@ -2123,7 +2170,7 @@ void mlir::gatherLoops(FuncOp func,
 // TODO: if necessary, this can be extended to also compose in any
 // affine.applys, fold to constant if all result dimensions of the map are
 // constant (canonicalizeMapAndOperands below already does this for single
-// result bound maps), and use simplifyMap to perform algebraic simplication.
+// result bound maps), and use simplifyMap to perform algebraic simplification.
 AffineForOp mlir::createCanonicalizedAffineForOp(
     OpBuilder b, Location loc, ValueRange lbOperands, AffineMap lbMap,
     ValueRange ubOperands, AffineMap ubMap, int64_t step) {
@@ -2164,7 +2211,7 @@ static AffineIfOp createSeparationCondition(MutableArrayRef<AffineForOp> loops,
   // larger (and resp. smaller) than any other lower (or upper bound).
   SmallVector<int64_t, 8> fullTileLb, fullTileUb;
   for (auto loop : loops) {
-    (void) loop;
+    (void)loop;
     // TODO: Non-unit stride is not an issue to generalize to.
     assert(loop.getStep() == 1 && "point loop step expected to be one");
     // Mark everything symbols for the purpose of finding a constant diff pair.
@@ -2262,7 +2309,7 @@ createFullTiles(MutableArrayRef<AffineForOp> inputNest,
     AffineForOp fullTileLoop = createCanonicalizedAffineForOp(
         b, loop.getLoc(), lbVmap.getOperands(), lbVmap.getAffineMap(),
         ubVmap.getOperands(), ubVmap.getAffineMap());
-    b = fullTileLoop.getBodyBuilder();
+    b = OpBuilder::atBlockTerminator(fullTileLoop.getBody());
     fullTileLoops.push_back(fullTileLoop);
   }
 
@@ -2271,7 +2318,7 @@ createFullTiles(MutableArrayRef<AffineForOp> inputNest,
   for (auto loopEn : llvm::enumerate(inputNest))
     operandMap.map(loopEn.value().getInductionVar(),
                    fullTileLoops[loopEn.index()].getInductionVar());
-  b = fullTileLoops.back().getBodyBuilder();
+  b = OpBuilder::atBlockTerminator(fullTileLoops.back().getBody());
   for (auto &op : inputNest.back().getBody()->without_terminator())
     b.clone(op, operandMap);
   return success();

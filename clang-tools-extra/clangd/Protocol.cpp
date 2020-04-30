@@ -11,8 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Protocol.h"
-#include "Logger.h"
 #include "URI.h"
+#include "support/Logger.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Index/IndexSymbol.h"
 #include "llvm/ADT/Hashing.h"
@@ -297,7 +297,7 @@ bool fromJSON(const llvm::json::Value &Params, ClientCapabilities &R) {
               SemanticHighlighting->getBoolean("semanticHighlighting"))
         R.TheiaSemanticHighlighting = *SemanticHighlightingSupport;
     }
-    if (auto *SemanticHighlighting = TextDocument->getObject("semanticTokens"))
+    if (TextDocument->getObject("semanticTokens"))
       R.SemanticTokens = true;
     if (auto *Diagnostics = TextDocument->getObject("publishDiagnostics")) {
       if (auto CategorySupport = Diagnostics->getBoolean("categorySupport"))
@@ -448,6 +448,11 @@ bool fromJSON(const llvm::json::Value &Params, DidOpenTextDocumentParams &R) {
 }
 
 bool fromJSON(const llvm::json::Value &Params, DidCloseTextDocumentParams &R) {
+  llvm::json::ObjectMapper O(Params);
+  return O && O.map("textDocument", R.textDocument);
+}
+
+bool fromJSON(const llvm::json::Value &Params, DidSaveTextDocumentParams &R) {
   llvm::json::ObjectMapper O(Params);
   return O && O.map("textDocument", R.textDocument);
 }
@@ -997,7 +1002,7 @@ static llvm::json::Value encodeTokens(llvm::ArrayRef<SemanticToken> Toks) {
     Result.push_back(Tok.tokenModifiers);
   }
   assert(Result.size() == SemanticTokenEncodingSize * Toks.size());
-  return Result;
+  return std::move(Result);
 }
 
 bool operator==(const SemanticToken &L, const SemanticToken &R) {
@@ -1025,7 +1030,7 @@ llvm::json::Value toJSON(const SemanticTokensOrEdits &TE) {
     Result["edits"] = *TE.edits;
   if (TE.tokens)
     Result["data"] = encodeTokens(*TE.tokens);
-  return Result;
+  return std::move(Result);
 }
 
 bool fromJSON(const llvm::json::Value &Params, SemanticTokensParams &R) {

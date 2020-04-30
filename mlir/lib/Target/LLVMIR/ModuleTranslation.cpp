@@ -20,6 +20,7 @@
 #include "mlir/IR/Module.h"
 #include "mlir/IR/StandardTypes.h"
 #include "mlir/Support/LLVM.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Frontend/OpenMP/OMPIRBuilder.h"
@@ -51,12 +52,16 @@ buildSequentialConstant(ArrayRef<llvm::Constant *> &constants,
     return result;
   }
 
-  if (!isa<llvm::SequentialType>(type)) {
+  llvm::Type *elementType;
+  if (auto *arrayTy = dyn_cast<llvm::ArrayType>(type)) {
+    elementType = arrayTy->getElementType();
+  } else if (auto *vectorTy = dyn_cast<llvm::VectorType>(type)) {
+    elementType = vectorTy->getElementType();
+  } else {
     emitError(loc) << "expected sequential LLVM types wrapping a scalar";
     return nullptr;
   }
 
-  llvm::Type *elementType = type->getSequentialElementType();
   SmallVector<llvm::Constant *, 8> nested;
   nested.reserve(shape.front());
   for (int64_t i = 0; i < shape.front(); ++i) {
@@ -74,9 +79,15 @@ buildSequentialConstant(ArrayRef<llvm::Constant *> &constants,
 
 /// Returns the first non-sequential type nested in sequential types.
 static llvm::Type *getInnermostElementType(llvm::Type *type) {
-  while (isa<llvm::SequentialType>(type))
-    type = type->getSequentialElementType();
-  return type;
+  do {
+    if (auto *arrayTy = dyn_cast<llvm::ArrayType>(type)) {
+      type = arrayTy->getElementType();
+    } else if (auto *vectorTy = dyn_cast<llvm::VectorType>(type)) {
+      type = vectorTy->getElementType();
+    } else {
+      return type;
+    }
+  } while (1);
 }
 
 /// Create an LLVM IR constant of `llvmType` from the MLIR attribute `attr`.
@@ -106,17 +117,24 @@ llvm::Constant *ModuleTranslation::getLLVMConstant(llvm::Type *llvmType,
     return llvm::ConstantExpr::getBitCast(
         functionMapping.lookup(funcAttr.getValue()), llvmType);
   if (auto splatAttr = attr.dyn_cast<SplatElementsAttr>()) {
-    auto *sequentialType = cast<llvm::SequentialType>(llvmType);
-    auto *elementType = sequentialType->getElementType();
-    uint64_t numElements = sequentialType->getNumElements();
+    llvm::Type *elementType;
+    uint64_t numElements;
+    if (auto *arrayTy = dyn_cast<llvm::ArrayType>(llvmType)) {
+      elementType = arrayTy->getElementType();
+      numElements = arrayTy->getNumElements();
+    } else {
+      auto *vectorTy = cast<llvm::VectorType>(llvmType);
+      elementType = vectorTy->getElementType();
+      numElements = vectorTy->getNumElements();
+    }
     // Splat value is a scalar. Extract it only if the element type is not
     // another sequence type. The recursion terminates because each step removes
     // one outer sequential type.
+    bool elementTypeSequential =
+        isa<llvm::ArrayType>(elementType) || isa<llvm::VectorType>(elementType);
     llvm::Constant *child = getLLVMConstant(
         elementType,
-        isa<llvm::SequentialType>(elementType) ? splatAttr
-                                               : splatAttr.getSplatValue(),
-        loc);
+        elementTypeSequential ? splatAttr : splatAttr.getSplatValue(), loc);
     if (!child)
       return nullptr;
     if (llvmType->isVectorTy())
@@ -283,11 +301,40 @@ ModuleTranslation::ModuleTranslation(Operation *module,
       debugTranslation(
           std::make_unique<DebugTranslation>(module, *this->llvmModule)),
       ompDialect(
-          module->getContext()->getRegisteredDialect<omp::OpenMPDialect>()) {
+          module->getContext()->getRegisteredDialect<omp::OpenMPDialect>()),
+      llvmDialect(module->getContext()->getRegisteredDialect<LLVMDialect>()) {
   assert(satisfiesLLVMModule(mlirModule) &&
          "mlirModule should honor LLVM's module semantics.");
 }
 ModuleTranslation::~ModuleTranslation() {}
+
+/// Given an OpenMP MLIR operation, create the corresponding LLVM IR
+/// (including OpenMP runtime calls).
+LogicalResult
+ModuleTranslation::convertOmpOperation(Operation &opInst,
+                                       llvm::IRBuilder<> &builder) {
+  if (!ompBuilder) {
+    ompBuilder = std::make_unique<llvm::OpenMPIRBuilder>(*llvmModule);
+    ompBuilder->initialize();
+  }
+  return llvm::TypeSwitch<Operation *, LogicalResult>(&opInst)
+      .Case([&](omp::BarrierOp) {
+        ompBuilder->CreateBarrier(builder.saveIP(), llvm::omp::OMPD_barrier);
+        return success();
+      })
+      .Case([&](omp::TaskwaitOp) {
+        ompBuilder->CreateTaskwait(builder.saveIP());
+        return success();
+      })
+      .Case([&](omp::TaskyieldOp) {
+        ompBuilder->CreateTaskyield(builder.saveIP());
+        return success();
+      })
+      .Default([&](Operation *inst) {
+        return inst->emitError("unsupported OpenMP operation: ")
+               << inst->getName();
+      });
+}
 
 /// Given a single MLIR operation, create the corresponding LLVM IR operation
 /// using the `builder`.  LLVM IR Builder does not have a generic interface so
@@ -317,7 +364,12 @@ LogicalResult ModuleTranslation::convertOperation(Operation &opInst,
       return builder.CreateCall(functionMapping.lookup(attr.getValue()),
                                 operandsRef);
     } else {
-      return builder.CreateCall(operandsRef.front(), operandsRef.drop_front());
+      auto *calleePtrType =
+          cast<llvm::PointerType>(operandsRef.front()->getType());
+      auto *calleeType =
+          cast<llvm::FunctionType>(calleePtrType->getElementType());
+      return builder.CreateCall(calleeType, operandsRef.front(),
+                                operandsRef.drop_front());
     }
   };
 
@@ -336,14 +388,19 @@ LogicalResult ModuleTranslation::convertOperation(Operation &opInst,
   if (auto invOp = dyn_cast<LLVM::InvokeOp>(opInst)) {
     auto operands = lookupValues(opInst.getOperands());
     ArrayRef<llvm::Value *> operandsRef(operands);
-    if (auto attr = opInst.getAttrOfType<FlatSymbolRefAttr>("callee"))
+    if (auto attr = opInst.getAttrOfType<FlatSymbolRefAttr>("callee")) {
       builder.CreateInvoke(functionMapping.lookup(attr.getValue()),
                            blockMapping[invOp.getSuccessor(0)],
                            blockMapping[invOp.getSuccessor(1)], operandsRef);
-    else
+    } else {
+      auto *calleePtrType =
+          cast<llvm::PointerType>(operandsRef.front()->getType());
+      auto *calleeType =
+          cast<llvm::FunctionType>(calleePtrType->getElementType());
       builder.CreateInvoke(
-          operandsRef.front(), blockMapping[invOp.getSuccessor(0)],
+          calleeType, operandsRef.front(), blockMapping[invOp.getSuccessor(0)],
           blockMapping[invOp.getSuccessor(1)], operandsRef.drop_front());
+    }
     return success();
   }
 
@@ -388,17 +445,7 @@ LogicalResult ModuleTranslation::convertOperation(Operation &opInst,
   }
 
   if (opInst.getDialect() == ompDialect) {
-    if (!ompBuilder) {
-      ompBuilder = std::make_unique<llvm::OpenMPIRBuilder>(*llvmModule);
-      ompBuilder->initialize();
-    }
-
-    if (isa<omp::BarrierOp>(opInst)) {
-      ompBuilder->CreateBarrier(builder.saveIP(), llvm::omp::OMPD_barrier);
-      return success();
-    }
-    return opInst.emitError("unsupported OpenMP operation: ")
-           << opInst.getName();
+    return convertOmpOperation(opInst, builder);
   }
 
   return opInst.emitError("unsupported or non-LLVM operation: ")
@@ -449,6 +496,9 @@ LogicalResult ModuleTranslation::convertBlock(Block &bb, bool ignoreArguments) {
 /// Create named global variables that correspond to llvm.mlir.global
 /// definitions.
 LogicalResult ModuleTranslation::convertGlobals() {
+  // Lock access to the llvm context.
+  llvm::sys::SmartScopedLock<true> scopedLock(
+      llvmDialect->getLLVMContextMutex());
   for (auto op : getModuleBody(mlirModule).getOps<LLVM::GlobalOp>()) {
     llvm::Type *type = op.getType().getUnderlyingType();
     llvm::Constant *cst = llvm::UndefValue::get(type);
@@ -708,6 +758,9 @@ LogicalResult ModuleTranslation::checkSupportedModuleOps(Operation *m) {
 }
 
 LogicalResult ModuleTranslation::convertFunctions() {
+  // Lock access to the llvm context.
+  llvm::sys::SmartScopedLock<true> scopedLock(
+      llvmDialect->getLLVMContextMutex());
   // Declare all functions first because there may be function calls that form a
   // call graph with cycles.
   for (auto function : getModuleBody(mlirModule).getOps<LLVMFuncOp>()) {
@@ -752,6 +805,8 @@ std::unique_ptr<llvm::Module>
 ModuleTranslation::prepareLLVMModule(Operation *m) {
   auto *dialect = m->getContext()->getRegisteredDialect<LLVM::LLVMDialect>();
   assert(dialect && "LLVM dialect must be registered");
+  // Lock the LLVM context as we might create new types here.
+  llvm::sys::SmartScopedLock<true> scopedLock(dialect->getLLVMContextMutex());
 
   auto llvmModule = llvm::CloneModule(dialect->getLLVMModule());
   if (!llvmModule)

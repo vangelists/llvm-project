@@ -275,7 +275,9 @@ def err_bad_parameter_name : Error<
   "%0 cannot be the name of a parameter">;
 def err_bad_parameter_name_template_id : Error<
   "parameter name cannot have template arguments">;
-def err_parameter_name_omitted : Error<"parameter name omitted">;
+def ext_parameter_name_omitted_c2x : ExtWarn<
+  "omitting the parameter name in a function definition is a C2x extension">,
+  InGroup<C2x>;
 def err_anyx86_interrupt_attribute : Error<
   "%select{x86|x86-64}0 'interrupt' attribute only applies to functions that "
   "have %select{a 'void' return type|"
@@ -2007,7 +2009,7 @@ def err_reference_bind_init_list : Error<
 def err_init_list_bad_dest_type : Error<
   "%select{|non-aggregate }0type %1 cannot be initialized with an initializer "
   "list">;
-def warn_cxx2a_compat_aggregate_init_with_ctors : Warning<
+def warn_cxx20_compat_aggregate_init_with_ctors : Warning<
   "aggregate initialization of type %0 with user-declared constructors "
   "is incompatible with C++20">, DefaultIgnore, InGroup<CXX20Compat>;
 
@@ -2528,7 +2530,7 @@ def warn_cxx11_compat_constexpr_body_invalid_stmt : Warning<
   "use of this statement in a constexpr %select{function|constructor}0 "
   "is incompatible with C++ standards before C++14">,
   InGroup<CXXPre14Compat>, DefaultIgnore;
-def ext_constexpr_body_invalid_stmt_cxx2a : ExtWarn<
+def ext_constexpr_body_invalid_stmt_cxx20 : ExtWarn<
   "use of this statement in a constexpr %select{function|constructor}0 "
   "is a C++20 extension">, InGroup<CXX20>;
 def warn_cxx17_compat_constexpr_body_invalid_stmt : Warning<
@@ -2591,7 +2593,7 @@ def note_constexpr_body_previous_return : Note<
   "previous return statement is here">;
 
 // C++20 function try blocks in constexpr
-def ext_constexpr_function_try_block_cxx2a : ExtWarn<
+def ext_constexpr_function_try_block_cxx20 : ExtWarn<
   "function try block in constexpr %select{function|constructor}0 is "
   "a C++20 extension">, InGroup<CXX20>;
 def warn_cxx17_compat_constexpr_function_try_block : Warning<
@@ -2943,7 +2945,7 @@ def warn_objc_literal_comparison : Warning<
   "a numeric literal|a boxed expression|}0 has undefined behavior">,
   InGroup<ObjCLiteralComparison>;
 def err_missing_atsign_prefix : Error<
-  "string literal must be prefixed by '@' ">;
+  "%select{string|numeric}0 literal must be prefixed by '@'">;
 def warn_objc_string_literal_comparison : Warning<
   "direct comparison of a string literal has undefined behavior">,
   InGroup<ObjCStringComparison>;
@@ -3121,6 +3123,10 @@ def warn_weak_identifier_undeclared : Warning<
 def warn_attribute_cmse_entry_static : Warning<
   "'cmse_nonsecure_entry' cannot be applied to functions with internal linkage">,
   InGroup<IgnoredAttributes>;
+def warn_cmse_nonsecure_union : Warning<
+  "passing union across security boundary via %select{parameter %1|return value}0 "
+  "may leak information">,
+  InGroup<DiagGroup<"cmse-union-leak">>;
 def err_attribute_weak_static : Error<
   "weak declaration cannot have internal linkage">;
 def err_attribute_selectany_non_extern_data : Error<
@@ -3334,7 +3340,7 @@ def warn_thread_attribute_argument_not_lockable : Warning<
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
 def warn_thread_attribute_decl_not_lockable : Warning<
   "%0 attribute can only be applied in a context annotated "
-  "with 'capability(\"mutex\")' attribute">,
+  "with 'capability' attribute">,
   InGroup<ThreadSafetyAttributes>, DefaultIgnore;
 def warn_thread_attribute_decl_not_pointer : Warning<
   "%0 only applies to pointer types; type here is %1">,
@@ -3547,7 +3553,7 @@ def warn_impcast_integer_float_precision : Warning<
   InGroup<ImplicitIntFloatConversion>, DefaultIgnore;
 def warn_impcast_integer_float_precision_constant : Warning<
   "implicit conversion from %2 to %3 changes value from %0 to %1">,
-  InGroup<ImplicitIntFloatConversion>;
+  InGroup<ImplicitConstIntFloatConversion>;
 
 def warn_impcast_float_to_integer : Warning<
   "implicit conversion from %0 to %1 changes value from %2 to %3">,
@@ -3952,6 +3958,8 @@ def err_use_of_default_argument_to_function_declared_later : Error<
 def note_default_argument_declared_here : Note<
   "default argument declared here">;
 def err_recursive_default_argument : Error<"recursive evaluation of default argument">;
+def note_recursive_default_argument_used_here : Note<
+  "default argument used here">;
 
 def ext_param_promoted_not_compatible_with_prototype : ExtWarn<
   "%diff{promoted type $ of K&R function parameter is not compatible with the "
@@ -5943,10 +5951,12 @@ def err_block_return_missing_expr : Error<
   "non-void block should return a value">;
 def err_func_def_incomplete_result : Error<
   "incomplete result type %0 in function definition">;
-def err_atomic_specifier_bad_type : Error<
-  "_Atomic cannot be applied to "
-  "%select{incomplete |array |function |reference |atomic |qualified |sizeless |}0type "
-  "%1 %select{|||||||which is not trivially copyable}0">;
+def err_atomic_specifier_bad_type
+    : Error<"_Atomic cannot be applied to "
+            "%select{incomplete |array |function |reference |atomic |qualified "
+            "|sizeless ||integer |integer }0type "
+            "%1 %select{|||||||which is not trivially copyable|with less than "
+            "1 byte of precision|with a non power of 2 precision}0">;
 
 // Expressions.
 def select_unary_expr_or_type_trait_kind : TextSubstitution<
@@ -6288,10 +6298,10 @@ def note_array_init_plain_string_into_char8_t : Note<
 def err_array_init_utf8_string_into_char : Error<
   "%select{|ISO C++20 does not permit }0initialization of char array with "
   "UTF-8 string literal%select{ is not permitted by '-fchar8_t'|}0">;
-def warn_cxx2a_compat_utf8_string : Warning<
+def warn_cxx20_compat_utf8_string : Warning<
   "type of UTF-8 string literal will change from array of const char to "
   "array of const char8_t in C++20">, InGroup<CXX20Compat>, DefaultIgnore;
-def note_cxx2a_compat_utf8_string_remove_u8 : Note<
+def note_cxx20_compat_utf8_string_remove_u8 : Note<
   "remove 'u8' prefix to avoid a change of behavior; "
   "Clang encodes unprefixed narrow string literals as UTF-8">;
 def err_array_init_different_type : Error<
@@ -6432,7 +6442,7 @@ def warn_arith_conv_enum_float : Warning<
   "%plural{2:with|4:from|:and}0 "
   "%select{enumeration|floating-point}1 type %3">,
   InGroup<EnumFloatConversion>, DefaultIgnore;
-def warn_arith_conv_enum_float_cxx2a : Warning<
+def warn_arith_conv_enum_float_cxx20 : Warning<
   "%sub{select_arith_conv_kind}0 "
   "%select{floating-point|enumeration}1 type %2 "
   "%plural{2:with|4:from|:and}0 "
@@ -6442,27 +6452,27 @@ def warn_arith_conv_mixed_enum_types : Warning<
   "%sub{select_arith_conv_kind}0 "
   "different enumeration types%diff{ ($ and $)|}1,2">,
   InGroup<EnumEnumConversion>, DefaultIgnore;
-def warn_arith_conv_mixed_enum_types_cxx2a : Warning<
+def warn_arith_conv_mixed_enum_types_cxx20 : Warning<
   "%sub{select_arith_conv_kind}0 "
   "different enumeration types%diff{ ($ and $)|}1,2 is deprecated">,
   InGroup<DeprecatedEnumEnumConversion>;
 def warn_arith_conv_mixed_anon_enum_types : Warning<
   warn_arith_conv_mixed_enum_types.Text>,
   InGroup<AnonEnumEnumConversion>, DefaultIgnore;
-def warn_arith_conv_mixed_anon_enum_types_cxx2a : Warning<
-  warn_arith_conv_mixed_enum_types_cxx2a.Text>,
+def warn_arith_conv_mixed_anon_enum_types_cxx20 : Warning<
+  warn_arith_conv_mixed_enum_types_cxx20.Text>,
   InGroup<DeprecatedAnonEnumEnumConversion>;
 def warn_conditional_mixed_enum_types : Warning<
   warn_arith_conv_mixed_enum_types.Text>,
   InGroup<EnumCompareConditional>, DefaultIgnore;
-def warn_conditional_mixed_enum_types_cxx2a : Warning<
-  warn_arith_conv_mixed_enum_types_cxx2a.Text>,
+def warn_conditional_mixed_enum_types_cxx20 : Warning<
+  warn_arith_conv_mixed_enum_types_cxx20.Text>,
   InGroup<DeprecatedEnumCompareConditional>;
 def warn_comparison_mixed_enum_types : Warning<
   warn_arith_conv_mixed_enum_types.Text>,
   InGroup<EnumCompare>;
-def warn_comparison_mixed_enum_types_cxx2a : Warning<
-  warn_arith_conv_mixed_enum_types_cxx2a.Text>,
+def warn_comparison_mixed_enum_types_cxx20 : Warning<
+  warn_arith_conv_mixed_enum_types_cxx20.Text>,
   InGroup<DeprecatedEnumCompare>;
 def warn_comparison_of_mixed_enum_types_switch : Warning<
   "comparison of different enumeration types in switch statement"
@@ -7247,7 +7257,7 @@ let CategoryName = "Lambda Issue" in {
   def warn_cxx17_compat_equals_this_lambda_capture : Warning<
     "explicit capture of 'this' with a capture default of '=' is incompatible "
     "with C++ standards before C++20">, InGroup<CXXPre20Compat>, DefaultIgnore;
-  def ext_equals_this_lambda_capture_cxx2a : ExtWarn<
+  def ext_equals_this_lambda_capture_cxx20 : ExtWarn<
     "explicit capture of 'this' with a capture default of '=' "
     "is a C++20 extension">, InGroup<CXX20>;
   def warn_deprecated_this_capture : Warning<
@@ -8123,7 +8133,7 @@ def ext_cxx14_attr : Extension<
   "use of the %0 attribute is a C++14 extension">, InGroup<CXX14>;
 def ext_cxx17_attr : Extension<
   "use of the %0 attribute is a C++17 extension">, InGroup<CXX17>;
-def ext_cxx2a_attr : Extension<
+def ext_cxx20_attr : Extension<
   "use of the %0 attribute is a C++20 extension">, InGroup<CXX20>;
 
 def warn_unused_comparison : Warning<
@@ -9238,6 +9248,10 @@ def err_argument_not_shifted_byte : Error<
   "argument should be an 8-bit value shifted by a multiple of 8 bits">;
 def err_argument_not_shifted_byte_or_xxff : Error<
   "argument should be an 8-bit value shifted by a multiple of 8 bits, or in the form 0x??FF">;
+def err_rotation_argument_to_cadd
+    : Error<"argument should be the value 90 or 270">;
+def err_rotation_argument_to_cmla
+    : Error<"argument should be the value 0, 90, 180 or 270">;
 def warn_neon_vector_initializer_non_portable : Warning<
   "vector initializers are not compatible with NEON intrinsics in big endian "
   "mode">, InGroup<DiagGroup<"nonportable-vector-initialization">>;
@@ -10284,11 +10298,6 @@ def err_module_unimported_use : Error<
   "explicit specialization|partial specialization}0 of %1 must be imported "
   "from module '%2' before it is required">;
 def err_module_unimported_use_header : Error<
-  "missing '#include %3'; "
-  "%select{declaration|definition|default argument|"
-  "explicit specialization|partial specialization}0 of %1 must be imported "
-  "from module '%2' before it is required">;
-def err_module_unimported_use_global_module_fragment : Error<
   "%select{missing '#include'|missing '#include %3'}2; "
   "%select{||default argument of |explicit specialization of |"
   "partial specialization of }0%1 must be "
@@ -10298,6 +10307,10 @@ def err_module_unimported_use_multiple : Error<
   "%select{declaration|definition|default argument|"
   "explicit specialization|partial specialization}0 of %1 must be imported "
   "from one of the following modules before it is required:%2">;
+def note_unreachable_entity : Note<
+  "%select{declaration|definition|default argument declared|"
+  "explicit specialization declared|partial specialization declared}0 here "
+  "is not %select{visible|reachable|reachable|reachable|reachable|reachable}0">;
 def ext_module_import_in_extern_c : ExtWarn<
   "import of C++ module '%0' appears within extern \"C\" language linkage "
   "specification">, DefaultError,
@@ -10707,4 +10720,8 @@ def warn_sycl_kernel_return_type : Warning<
   "function template with 'sycl_kernel' attribute must have a 'void' return type">,
   InGroup<IgnoredAttributes>;
 
+def err_ext_int_bad_size : Error<"%select{signed|unsigned}0 _ExtInt must "
+                                 "have a bit size of at least %select{2|1}0">;
+def err_ext_int_max_size : Error<"%select{signed|unsigned}0 _ExtInt of bit "
+                                 "sizes greater than %1 not supported">;
 } // end of sema component.

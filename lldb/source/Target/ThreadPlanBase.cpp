@@ -26,21 +26,20 @@ using namespace lldb_private;
 // do.
 // FIXME: The "signal handling" policies should probably go here.
 
-ThreadPlanBase::ThreadPlanBase(Thread &thread, bool use_for_tracing)
+ThreadPlanBase::ThreadPlanBase(Thread &thread)
     : ThreadPlan(ThreadPlan::eKindBase, "base plan", thread, eVoteYes,
                  eVoteNoOpinion) {
-  if (use_for_tracing) {
-    constexpr auto tracer_type = ThreadPlan::GetThreadPlanTracerType();
-    // Set the tracer to a default tracer.
-    // FIXME: need to add a thread settings variable to pick various tracers...
-    if constexpr (tracer_type == ThreadPlanTracer::Type::eAssembly) {
-      SetThreadPlanTracer(std::make_shared<ThreadPlanAssemblyTracer>(thread));
-    } else if constexpr (tracer_type == ThreadPlanTracer::Type::eInstruction) {
-      SetThreadPlanTracer(std::make_shared<ThreadPlanInstructionTracer>(thread));
-    } else {
-      SetThreadPlanTracer(std::make_shared<ThreadPlanTracer>(thread));
-    }
-  }
+// Set the tracer to a default tracer.
+// FIXME: need to add a thread settings variable to pix various tracers...
+#define THREAD_PLAN_USE_ASSEMBLY_TRACER 1
+
+#ifdef THREAD_PLAN_USE_ASSEMBLY_TRACER
+  ThreadPlanTracerSP new_tracer_sp(new ThreadPlanAssemblyTracer(thread));
+#else
+  ThreadPlanTracerSP new_tracer_sp(new ThreadPlanTracer(m_thread));
+#endif
+  new_tracer_sp->EnableTracing(thread.GetTraceEnabledState());
+  SetThreadPlanTracer(new_tracer_sp);
   SetIsMasterPlan(true);
 }
 
@@ -59,7 +58,7 @@ bool ThreadPlanBase::DoPlanExplainsStop(Event *event_ptr) {
 }
 
 Vote ThreadPlanBase::ShouldReportStop(Event *event_ptr) {
-  StopInfoSP stop_info_sp = m_thread.GetStopInfo();
+  StopInfoSP stop_info_sp = GetThread().GetStopInfo();
   if (stop_info_sp) {
     bool should_notify = stop_info_sp->ShouldNotify(event_ptr);
     if (should_notify)
@@ -97,8 +96,8 @@ bool ThreadPlanBase::ShouldStop(Event *event_ptr) {
             log,
             "Base plan discarding thread plans for thread tid = 0x%4.4" PRIx64
             " (breakpoint hit.)",
-            m_thread.GetID());
-        m_thread.DiscardThreadPlans(false);
+            m_tid);
+        GetThread().DiscardThreadPlans(false);
         return true;
       }
       // If we aren't going to stop at this breakpoint, and it is internal,
@@ -126,9 +125,9 @@ bool ThreadPlanBase::ShouldStop(Event *event_ptr) {
       LLDB_LOGF(
           log,
           "Base plan discarding thread plans for thread tid = 0x%4.4" PRIx64
-          " (exception: %s)",
-          m_thread.GetID(), stop_info_sp->GetDescription());
-      m_thread.DiscardThreadPlans(false);
+          " (exception: %s)", 
+          m_tid, stop_info_sp->GetDescription());
+      GetThread().DiscardThreadPlans(false);
       return true;
 
     case eStopReasonExec:
@@ -139,8 +138,8 @@ bool ThreadPlanBase::ShouldStop(Event *event_ptr) {
           log,
           "Base plan discarding thread plans for thread tid = 0x%4.4" PRIx64
           " (exec.)",
-          m_thread.GetID());
-      m_thread.DiscardThreadPlans(false);
+          m_tid);
+      GetThread().DiscardThreadPlans(false);
       return true;
 
     case eStopReasonThreadExiting:
@@ -149,9 +148,9 @@ bool ThreadPlanBase::ShouldStop(Event *event_ptr) {
         LLDB_LOGF(
             log,
             "Base plan discarding thread plans for thread tid = 0x%4.4" PRIx64
-            " (signal: %s)",
-            m_thread.GetID(), stop_info_sp->GetDescription());
-        m_thread.DiscardThreadPlans(false);
+            " (signal: %s)", 
+            m_tid, stop_info_sp->GetDescription());
+        GetThread().DiscardThreadPlans(false);
         return true;
       } else {
         // We're not going to stop, but while we are here, let's figure out
@@ -162,9 +161,6 @@ bool ThreadPlanBase::ShouldStop(Event *event_ptr) {
           m_stop_vote = eVoteNo;
       }
       return false;
-
-    case eStopReasonTrace:
-      return TracerExplainsStop();
 
     default:
       return true;

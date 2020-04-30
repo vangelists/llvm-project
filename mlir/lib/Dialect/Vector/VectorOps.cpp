@@ -21,10 +21,8 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
-#include "mlir/Support/Functional.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/MathExtras.h"
-#include "mlir/Support/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include <numeric>
 
@@ -128,20 +126,20 @@ static void print(OpAsmPrinter &p, ReductionOp op) {
 // ContractionOp
 //===----------------------------------------------------------------------===//
 
-void vector::ContractionOp::build(Builder *builder, OperationState &result,
+void vector::ContractionOp::build(OpBuilder &builder, OperationState &result,
                                   Value lhs, Value rhs, Value acc,
                                   ArrayRef<ArrayRef<AffineExpr>> indexingExprs,
                                   ArrayRef<StringRef> iteratorTypes) {
   result.addOperands({lhs, rhs, acc});
   result.addTypes(acc.getType());
   result.addAttribute(getIndexingMapsAttrName(),
-                      builder->getAffineMapArrayAttr(
+                      builder.getAffineMapArrayAttr(
                           AffineMap::inferFromExprList(indexingExprs)));
   result.addAttribute(getIteratorTypesAttrName(),
-                      builder->getStrArrayAttr(iteratorTypes));
+                      builder.getStrArrayAttr(iteratorTypes));
 }
 
-void vector::ContractionOp::build(Builder *builder, OperationState &result,
+void vector::ContractionOp::build(OpBuilder &builder, OperationState &result,
                                   Value lhs, Value rhs, Value acc,
                                   ArrayAttr indexingMaps,
                                   ArrayAttr iteratorTypes) {
@@ -463,10 +461,10 @@ static Type inferExtractOpResultType(VectorType vectorType,
                          vectorType.getElementType());
 }
 
-void vector::ExtractOp::build(Builder *builder, OperationState &result,
+void vector::ExtractOp::build(OpBuilder &builder, OperationState &result,
                               Value source, ArrayRef<int64_t> position) {
   result.addOperands(source);
-  auto positionAttr = getVectorSubscriptAttr(*builder, position);
+  auto positionAttr = getVectorSubscriptAttr(builder, position);
   result.addTypes(inferExtractOpResultType(source.getType().cast<VectorType>(),
                                            positionAttr));
   result.addAttribute(getPositionAttrName(), positionAttr);
@@ -530,13 +528,13 @@ static LogicalResult verify(vector::ExtractOp op) {
 // ExtractSlicesOp
 //===----------------------------------------------------------------------===//
 
-void ExtractSlicesOp::build(Builder *builder, OperationState &result,
+void ExtractSlicesOp::build(OpBuilder &builder, OperationState &result,
                             TupleType tupleType, Value vector,
                             ArrayRef<int64_t> sizes,
                             ArrayRef<int64_t> strides) {
   result.addOperands(vector);
-  auto sizesAttr = getVectorSubscriptAttr(*builder, sizes);
-  auto stridesAttr = getVectorSubscriptAttr(*builder, strides);
+  auto sizesAttr = getVectorSubscriptAttr(builder, sizes);
+  auto stridesAttr = getVectorSubscriptAttr(builder, strides);
   result.addTypes(tupleType);
   result.addAttribute(getSizesAttrName(), sizesAttr);
   result.addAttribute(getStridesAttrName(), stridesAttr);
@@ -636,10 +634,10 @@ static LogicalResult verify(BroadcastOp op) {
 // ShuffleOp
 //===----------------------------------------------------------------------===//
 
-void ShuffleOp::build(Builder *builder, OperationState &result, Value v1,
+void ShuffleOp::build(OpBuilder &builder, OperationState &result, Value v1,
                       Value v2, ArrayRef<int64_t> mask) {
   result.addOperands({v1, v2});
-  auto maskAttr = getVectorSubscriptAttr(*builder, mask);
+  auto maskAttr = getVectorSubscriptAttr(builder, mask);
   result.addTypes(v1.getType());
   result.addAttribute(getMaskAttrName(), maskAttr);
 }
@@ -733,10 +731,10 @@ static LogicalResult verify(InsertElementOp op) {
 // InsertOp
 //===----------------------------------------------------------------------===//
 
-void InsertOp::build(Builder *builder, OperationState &result, Value source,
+void InsertOp::build(OpBuilder &builder, OperationState &result, Value source,
                      Value dest, ArrayRef<int64_t> position) {
   result.addOperands({source, dest});
-  auto positionAttr = getVectorSubscriptAttr(*builder, position);
+  auto positionAttr = getVectorSubscriptAttr(builder, position);
   result.addTypes(dest.getType());
   result.addAttribute(getPositionAttrName(), positionAttr);
 }
@@ -797,13 +795,13 @@ void InsertSlicesOp::getStrides(SmallVectorImpl<int64_t> &results) {
 // InsertStridedSliceOp
 //===----------------------------------------------------------------------===//
 
-void InsertStridedSliceOp::build(Builder *builder, OperationState &result,
+void InsertStridedSliceOp::build(OpBuilder &builder, OperationState &result,
                                  Value source, Value dest,
                                  ArrayRef<int64_t> offsets,
                                  ArrayRef<int64_t> strides) {
   result.addOperands({source, dest});
-  auto offsetsAttr = getVectorSubscriptAttr(*builder, offsets);
-  auto stridesAttr = getVectorSubscriptAttr(*builder, strides);
+  auto offsetsAttr = getVectorSubscriptAttr(builder, offsets);
+  auto stridesAttr = getVectorSubscriptAttr(builder, strides);
   result.addTypes(dest.getType());
   result.addAttribute(getOffsetsAttrName(), offsetsAttr);
   result.addAttribute(getStridesAttrName(), stridesAttr);
@@ -893,12 +891,10 @@ static LogicalResult isSumOfIntegerArrayAttrConfinedToShape(
 
 static ArrayAttr makeI64ArrayAttr(ArrayRef<int64_t> values,
                                   MLIRContext *context) {
-  auto attrs = functional::map(
-      [context](int64_t v) -> Attribute {
-        return IntegerAttr::get(IntegerType::get(64, context), APInt(64, v));
-      },
-      values);
-  return ArrayAttr::get(attrs, context);
+  auto attrs = llvm::map_range(values, [context](int64_t v) -> Attribute {
+    return IntegerAttr::get(IntegerType::get(64, context), APInt(64, v));
+  });
+  return ArrayAttr::get(llvm::to_vector<8>(attrs), context);
 }
 
 static LogicalResult verify(InsertStridedSliceOp op) {
@@ -1013,7 +1009,7 @@ static LogicalResult verify(ReshapeOp op) {
     return op.emitError("invalid output shape for vector type ")
            << outputVectorType;
 
-  // Verify that the 'fixedVectorSizes' match a input/output vector shape
+  // Verify that the 'fixedVectorSizes' match an input/output vector shape
   // suffix.
   unsigned inputVectorRank = inputVectorType.getRank();
   for (unsigned i = 0; i < numFixedVectorSizes; ++i) {
@@ -1078,13 +1074,13 @@ static Type inferStridedSliceOpResultType(VectorType vectorType,
   return VectorType::get(shape, vectorType.getElementType());
 }
 
-void StridedSliceOp::build(Builder *builder, OperationState &result,
+void StridedSliceOp::build(OpBuilder &builder, OperationState &result,
                            Value source, ArrayRef<int64_t> offsets,
                            ArrayRef<int64_t> sizes, ArrayRef<int64_t> strides) {
   result.addOperands(source);
-  auto offsetsAttr = getVectorSubscriptAttr(*builder, offsets);
-  auto sizesAttr = getVectorSubscriptAttr(*builder, sizes);
-  auto stridesAttr = getVectorSubscriptAttr(*builder, strides);
+  auto offsetsAttr = getVectorSubscriptAttr(builder, offsets);
+  auto sizesAttr = getVectorSubscriptAttr(builder, sizes);
+  auto stridesAttr = getVectorSubscriptAttr(builder, strides);
   result.addTypes(
       inferStridedSliceOpResultType(source.getType().cast<VectorType>(),
                                     offsetsAttr, sizesAttr, stridesAttr));
@@ -1470,7 +1466,8 @@ static MemRefType inferVectorTypeCastResultType(MemRefType t) {
   return MemRefType::get({}, VectorType::get(t.getShape(), t.getElementType()));
 }
 
-void TypeCastOp::build(Builder *builder, OperationState &result, Value source) {
+void TypeCastOp::build(OpBuilder &builder, OperationState &result,
+                       Value source) {
   result.addOperands(source);
   result.addTypes(
       inferVectorTypeCastResultType(source.getType().cast<MemRefType>()));
@@ -1515,7 +1512,7 @@ static void print(OpAsmPrinter &p, TupleOp op) {
   p.printOperands(op.getOperands());
   p.printOptionalAttrDict(op.getAttrs());
   p << " : ";
-  interleaveComma(op.getOperation()->getOperandTypes(), p);
+  llvm::interleaveComma(op.getOperation()->getOperandTypes(), p);
 }
 
 static LogicalResult verify(TupleOp op) { return success(); }

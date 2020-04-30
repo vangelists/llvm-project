@@ -343,11 +343,9 @@ void LinkerDriver::parseDirectives(InputFile *file) {
   ArgParser parser;
   // .drectve is always tokenized using Windows shell rules.
   // /EXPORT: option can appear too many times, processing in fastpath.
-  opt::InputArgList args;
-  std::vector<StringRef> exports;
-  std::tie(args, exports) = parser.parseDirectives(s);
+  ParsedDirectives directives = parser.parseDirectives(s);
 
-  for (StringRef e : exports) {
+  for (StringRef e : directives.exports) {
     // If a common header file contains dllexported function
     // declarations, many object files may end up with having the
     // same /EXPORT options. In order to save cost of parsing them,
@@ -366,7 +364,11 @@ void LinkerDriver::parseDirectives(InputFile *file) {
     config->exports.push_back(exp);
   }
 
-  for (auto *arg : args) {
+  // Handle /include: in bulk.
+  for (StringRef inc : directives.includes)
+    addUndefined(inc);
+
+  for (auto *arg : directives.args) {
     switch (arg->getOption().getID()) {
     case OPT_aligncomm:
       parseAligncomm(arg->getValue());
@@ -1273,6 +1275,14 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
       config->pdbAltPath = arg->getValue();
     if (args.hasArg(OPT_natvis))
       config->natvisFiles = args.getAllArgValues(OPT_natvis);
+    if (args.hasArg(OPT_pdbstream)) {
+      for (const StringRef value : args.getAllArgValues(OPT_pdbstream)) {
+        const std::pair<StringRef, StringRef> nameFile = value.split("=");
+        const StringRef name = nameFile.first;
+        const std::string file = nameFile.second.str();
+        config->namedStreams[name] = file;
+      }
+    }
 
     if (auto *arg = args.getLastArg(OPT_pdb_source_path))
       config->pdbSourcePath = arg->getValue();

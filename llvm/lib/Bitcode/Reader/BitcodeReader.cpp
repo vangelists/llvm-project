@@ -27,7 +27,6 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/AutoUpgrade.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/CallSite.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Comdat.h"
 #include "llvm/IR/Constant.h"
@@ -1304,6 +1303,9 @@ static uint64_t getRawAttributeMask(Attribute::AttrKind Val) {
   case Attribute::SanitizeMemTag:
     llvm_unreachable("sanitize_memtag attribute not supported in raw format");
     break;
+  case Attribute::Preallocated:
+    llvm_unreachable("preallocated attribute not supported in raw format");
+    break;
   }
   llvm_unreachable("Unsupported attribute type");
 }
@@ -1313,12 +1315,10 @@ static void addRawAttributeValue(AttrBuilder &B, uint64_t Val) {
 
   for (Attribute::AttrKind I = Attribute::None; I != Attribute::EndAttrKinds;
        I = Attribute::AttrKind(I + 1)) {
-    if (I == Attribute::SanitizeMemTag ||
-        I == Attribute::Dereferenceable ||
-        I == Attribute::DereferenceableOrNull ||
-        I == Attribute::ArgMemOnly ||
-        I == Attribute::AllocSize ||
-        I == Attribute::NoSync)
+    if (I == Attribute::SanitizeMemTag || I == Attribute::Dereferenceable ||
+        I == Attribute::DereferenceableOrNull || I == Attribute::ArgMemOnly ||
+        I == Attribute::AllocSize || I == Attribute::NoSync ||
+        I == Attribute::Preallocated)
       continue;
     if (uint64_t A = (Val & getRawAttributeMask(I))) {
       if (I == Attribute::Alignment)
@@ -1545,6 +1545,8 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::ImmArg;
   case bitc::ATTR_KIND_SANITIZE_MEMTAG:
     return Attribute::SanitizeMemTag;
+  case bitc::ATTR_KIND_PREALLOCATED:
+    return Attribute::Preallocated;
   }
 }
 
@@ -1660,8 +1662,11 @@ Error BitcodeReader::parseAttributeGroupBlock() {
           Attribute::AttrKind Kind;
           if (Error Err = parseAttrKind(Record[++i], &Kind))
             return Err;
-          if (Kind == Attribute::ByVal)
+          if (Kind == Attribute::ByVal) {
             B.addByValAttr(HasType ? getTypeByID(Record[++i]) : nullptr);
+          } else if (Kind == Attribute::Preallocated) {
+            B.addPreallocatedAttr(getTypeByID(Record[++i]));
+          }
         }
       }
 
@@ -2318,7 +2323,7 @@ Error BitcodeReader::resolveGlobalAndIndirectSymbolInits() {
   return Error::success();
 }
 
-static APInt readWideAPInt(ArrayRef<uint64_t> Vals, unsigned TypeBits) {
+APInt llvm::readWideAPInt(ArrayRef<uint64_t> Vals, unsigned TypeBits) {
   SmallVector<uint64_t, 8> Words(Vals.size());
   transform(Vals, Words.begin(),
                  BitcodeReader::decodeSignRotatedValue);
@@ -2505,7 +2510,11 @@ Error BitcodeReader::parseConstants() {
       if (Record.empty())
         return error("Invalid record");
 
-      Type *EltTy = cast<SequentialType>(CurTy)->getElementType();
+      Type *EltTy;
+      if (auto *Array = dyn_cast<ArrayType>(CurTy))
+        EltTy = Array->getElementType();
+      else
+        EltTy = cast<VectorType>(CurTy)->getElementType();
       if (EltTy->isIntegerTy(8)) {
         SmallVector<uint8_t, 16> Elts(Record.begin(), Record.end());
         if (isa<VectorType>(CurTy))
@@ -4164,7 +4173,7 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
       if (!Vec->getType()->isVectorTy())
         return error("Invalid type for value");
       I = ExtractElementInst::Create(Vec, Idx);
-      FullTy = FullTy->getVectorElementType();
+      FullTy = cast<VectorType>(FullTy)->getElementType();
       InstructionList.push_back(I);
       break;
     }
@@ -4198,8 +4207,9 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
         return error("Invalid type for value");
 
       I = new ShuffleVectorInst(Vec1, Vec2, Mask);
-      FullTy = VectorType::get(FullTy->getVectorElementType(),
-                               Mask->getType()->getVectorElementCount());
+      FullTy =
+          VectorType::get(cast<VectorType>(FullTy)->getElementType(),
+                          cast<VectorType>(Mask->getType())->getElementCount());
       InstructionList.push_back(I);
       break;
     }
@@ -5191,8 +5201,8 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
             !FullTy->isPointerTy() && !isa<StructType>(FullTy) &&
             !isa<ArrayType>(FullTy) &&
             (!isa<VectorType>(FullTy) ||
-             FullTy->getVectorElementType()->isFloatingPointTy() ||
-             FullTy->getVectorElementType()->isIntegerTy()) &&
+             cast<VectorType>(FullTy)->getElementType()->isFloatingPointTy() ||
+             cast<VectorType>(FullTy)->getElementType()->isIntegerTy()) &&
             "Structured types must be assigned with corresponding non-opaque "
             "pointer type");
       }
@@ -5307,7 +5317,7 @@ Error BitcodeReader::materialize(GlobalValue *GV) {
     for (auto UI = I.first->materialized_user_begin(), UE = I.first->user_end();
          UI != UE;)
       // Don't expect any other users than call sites
-      CallSite(*UI++).setCalledFunction(I.second);
+      cast<CallBase>(*UI++)->setCalledFunction(I.second);
 
   // Finish fn->subprogram upgrade for materialized functions.
   if (DISubprogram *SP = MDLoader->lookupSubprogramForFunction(F))

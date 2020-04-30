@@ -20,6 +20,8 @@
 
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/AsmParser/Parser.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Type.h"
@@ -102,7 +104,8 @@ static ParseResult parseCmpOp(OpAsmParser &parser, OperationState &result) {
     return parser.emitError(trailingTypeLoc, "expected LLVM IR dialect type");
   if (argType.getUnderlyingType()->isVectorTy())
     resultType = LLVMType::getVectorTy(
-        resultType, argType.getUnderlyingType()->getVectorNumElements());
+        resultType, llvm::cast<llvm::VectorType>(argType.getUnderlyingType())
+                        ->getNumElements());
 
   result.addTypes({resultType});
   return success();
@@ -609,7 +612,7 @@ static ParseResult parseCallOp(OpAsmParser &parser, OperationState &result) {
 //===----------------------------------------------------------------------===//
 // Expects vector to be of wrapped LLVM vector type and position to be of
 // wrapped LLVM i32 type.
-void LLVM::ExtractElementOp::build(Builder *b, OperationState &result,
+void LLVM::ExtractElementOp::build(OpBuilder &b, OperationState &result,
                                    Value vector, Value position,
                                    ArrayRef<NamedAttribute> attrs) {
   auto wrappedVectorType = vector.getType().cast<LLVM::LLVMType>();
@@ -889,21 +892,21 @@ static LogicalResult verify(AddressOfOp op) {
 /// the name of the attribute in ODS.
 static StringRef getLinkageAttrName() { return "linkage"; }
 
-void GlobalOp::build(Builder *builder, OperationState &result, LLVMType type,
+void GlobalOp::build(OpBuilder &builder, OperationState &result, LLVMType type,
                      bool isConstant, Linkage linkage, StringRef name,
                      Attribute value, unsigned addrSpace,
                      ArrayRef<NamedAttribute> attrs) {
   result.addAttribute(SymbolTable::getSymbolAttrName(),
-                      builder->getStringAttr(name));
+                      builder.getStringAttr(name));
   result.addAttribute("type", TypeAttr::get(type));
   if (isConstant)
-    result.addAttribute("constant", builder->getUnitAttr());
+    result.addAttribute("constant", builder.getUnitAttr());
   if (value)
     result.addAttribute("value", value);
-  result.addAttribute(getLinkageAttrName(), builder->getI64IntegerAttr(
-                                                static_cast<int64_t>(linkage)));
+  result.addAttribute(getLinkageAttrName(),
+                      builder.getI64IntegerAttr(static_cast<int64_t>(linkage)));
   if (addrSpace != 0)
-    result.addAttribute("addr_space", builder->getI32IntegerAttr(addrSpace));
+    result.addAttribute("addr_space", builder.getI32IntegerAttr(addrSpace));
   result.attributes.append(attrs.begin(), attrs.end());
   result.addRegion();
 }
@@ -1009,7 +1012,7 @@ static ParseResult parseOptionalLLVMKeyword(OpAsmParser &parser,
   return success();
 }
 
-// operation ::= `llvm.mlir.global` linkage `constant`? `@` identifier
+// operation ::= `llvm.mlir.global` linkage? `constant`? `@` identifier
 //               `(` attribute? `)` attribute-list? (`:` type)? region?
 //
 // The type can be omitted for string attributes, in which case it will be
@@ -1017,7 +1020,9 @@ static ParseResult parseOptionalLLVMKeyword(OpAsmParser &parser,
 static ParseResult parseGlobalOp(OpAsmParser &parser, OperationState &result) {
   if (failed(parseOptionalLLVMKeyword<Linkage>(parser, result,
                                                getLinkageAttrName())))
-    return parser.emitError(parser.getCurrentLocation(), "expected linkage");
+    result.addAttribute(getLinkageAttrName(),
+                        parser.getBuilder().getI64IntegerAttr(
+                            static_cast<int64_t>(LLVM::Linkage::External)));
 
   if (succeeded(parser.parseOptionalKeyword("constant")))
     result.addAttribute("constant", parser.getBuilder().getUnitAttr());
@@ -1101,8 +1106,8 @@ static LogicalResult verify(GlobalOp op) {
 //===----------------------------------------------------------------------===//
 // Expects vector to be of wrapped LLVM vector type and position to be of
 // wrapped LLVM i32 type.
-void LLVM::ShuffleVectorOp::build(Builder *b, OperationState &result, Value v1,
-                                  Value v2, ArrayAttr mask,
+void LLVM::ShuffleVectorOp::build(OpBuilder &b, OperationState &result,
+                                  Value v1, Value v2, ArrayAttr mask,
                                   ArrayRef<NamedAttribute> attrs) {
   auto wrappedContainerType1 = v1.getType().cast<LLVM::LLVMType>();
   auto vType = LLVMType::getVectorTy(
@@ -1165,16 +1170,16 @@ Block *LLVMFuncOp::addEntryBlock() {
   return entry;
 }
 
-void LLVMFuncOp::build(Builder *builder, OperationState &result, StringRef name,
-                       LLVMType type, LLVM::Linkage linkage,
+void LLVMFuncOp::build(OpBuilder &builder, OperationState &result,
+                       StringRef name, LLVMType type, LLVM::Linkage linkage,
                        ArrayRef<NamedAttribute> attrs,
                        ArrayRef<NamedAttributeList> argAttrs) {
   result.addRegion();
   result.addAttribute(SymbolTable::getSymbolAttrName(),
-                      builder->getStringAttr(name));
+                      builder.getStringAttr(name));
   result.addAttribute("type", TypeAttr::get(type));
-  result.addAttribute(getLinkageAttrName(), builder->getI64IntegerAttr(
-                                                static_cast<int64_t>(linkage)));
+  result.addAttribute(getLinkageAttrName(),
+                      builder.getI64IntegerAttr(static_cast<int64_t>(linkage)));
   result.attributes.append(attrs.begin(), attrs.end());
   if (argAttrs.empty())
     return;
@@ -1679,6 +1684,9 @@ LLVMDialect::~LLVMDialect() {}
 
 llvm::LLVMContext &LLVMDialect::getLLVMContext() { return impl->llvmContext; }
 llvm::Module &LLVMDialect::getLLVMModule() { return impl->module; }
+llvm::sys::SmartMutex<true> &LLVMDialect::getLLVMContextMutex() {
+  return impl->mutex;
+}
 
 /// Parse a type registered to this dialect.
 Type LLVMDialect::parseType(DialectAsmParser &parser) const {
@@ -1772,7 +1780,12 @@ bool LLVMType::isArrayTy() { return getUnderlyingType()->isArrayTy(); }
 
 /// Vector type utilities.
 LLVMType LLVMType::getVectorElementType() {
-  return get(getContext(), getUnderlyingType()->getVectorElementType());
+  return get(
+      getContext(),
+      llvm::cast<llvm::VectorType>(getUnderlyingType())->getElementType());
+}
+unsigned LLVMType::getVectorNumElements() {
+  return llvm::cast<llvm::VectorType>(getUnderlyingType())->getNumElements();
 }
 bool LLVMType::isVectorTy() { return getUnderlyingType()->isVectorTy(); }
 
@@ -1962,4 +1975,17 @@ Value mlir::LLVM::createGlobalString(Location loc, OpBuilder &builder,
 bool mlir::LLVM::satisfiesLLVMModule(Operation *op) {
   return op->hasTrait<OpTrait::SymbolTable>() &&
          op->hasTrait<OpTrait::IsIsolatedFromAbove>();
+}
+
+std::unique_ptr<llvm::Module>
+mlir::LLVM::cloneModuleIntoNewContext(llvm::LLVMContext *context,
+                                      llvm::Module *module) {
+  SmallVector<char, 1> buffer;
+  {
+    llvm::raw_svector_ostream os(buffer);
+    WriteBitcodeToFile(*module, os);
+  }
+  llvm::MemoryBufferRef bufferRef(StringRef(buffer.data(), buffer.size()),
+                                  "cloned module buffer");
+  return cantFail(parseBitcodeFile(bufferRef, *context));
 }

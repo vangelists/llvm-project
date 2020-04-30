@@ -245,13 +245,11 @@ TEST_F(FormatTestCSharp, Attributes) {
                "}");
 
   verifyFormat("[TestMethod]\n"
-               "public string Host\n"
-               "{ set; get; }");
+               "public string Host { set; get; }");
 
   verifyFormat("[TestMethod(\"start\", HelpText = \"Starts the server "
                "listening on provided host\")]\n"
-               "public string Host\n"
-               "{ set; get; }");
+               "public string Host { set; get; }");
 
   verifyFormat(
       "[DllImport(\"Hello\", EntryPoint = \"hello_world\")]\n"
@@ -615,6 +613,64 @@ public string Name {
   set => _name = value;
 })",
                Style);
+
+  // Examples taken from
+  // https://docs.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/properties
+  verifyFormat(R"(
+// Expression body definitions
+public class SaleItem {
+  public decimal Price {
+    get => _cost;
+    set => _cost = value;
+  }
+})",
+               Style);
+
+  verifyFormat(R"(
+// Properties with backing fields
+class TimePeriod {
+  public double Hours {
+    get { return _seconds / 3600; }
+    set {
+      if (value < 0 || value > 24)
+        throw new ArgumentOutOfRangeException(
+            $"{nameof(value)} must be between 0 and 24.");
+      _seconds = value * 3600;
+    }
+  }
+})",
+               Style);
+
+  verifyFormat(R"(
+// Auto-implemented properties
+public class SaleItem {
+  public decimal Price { get; set; }
+})",
+               Style);
+
+  // Add column limit to wrap long lines.
+  Style.ColumnLimit = 100;
+
+  // Examples with assignment to default value.
+  verifyFormat(R"(
+// Long assignment to default value
+class MyClass {
+  public override VeryLongNamedTypeIndeed VeryLongNamedValue { get; set } =
+      VeryLongNamedTypeIndeed.Create(DefaultFirstArgument, DefaultSecondArgument,
+                                     DefaultThirdArgument);
+})",
+               Style);
+
+  verifyFormat(R"(
+// Long assignment to default value with expression body
+class MyClass {
+  public override VeryLongNamedTypeIndeed VeryLongNamedValue {
+    get => veryLongNamedField;
+    set => veryLongNamedField = value;
+  } = VeryLongNamedTypeIndeed.Create(DefaultFirstArgument, DefaultSecondArgument,
+                                     DefaultThirdArgument);
+})",
+               Style);
 }
 
 TEST_F(FormatTestCSharp, CSharpSpaces) {
@@ -624,6 +680,7 @@ TEST_F(FormatTestCSharp, CSharpSpaces) {
   Style.SpaceBeforeCpp11BracedList = true;
   Style.Cpp11BracedListStyle = false;
   Style.SpacesInContainerLiterals = false;
+  Style.SpaceAfterCStyleCast = false;
 
   verifyFormat(R"(new Car { "Door", 0.1 })", Style);
   verifyFormat(R"(new Car { 0.1, "Door" })", Style);
@@ -641,6 +698,13 @@ TEST_F(FormatTestCSharp, CSharpSpaces) {
   verifyFormat(R"(Result this[Index x] => Foo(x);)", Style);
 
   verifyFormat(R"(char[,,] rawCharArray = MakeCharacterGrid();)", Style);
+  verifyFormat(R"(var (key, value))", Style);
+
+  // Not seen as a C-style cast.
+  verifyFormat(R"(//
+foreach ((A a, B b) in someList) {
+})",
+               Style);
 
   Style.SpacesInSquareBrackets = true;
   verifyFormat(R"(private float[ , ] Values;)", Style);

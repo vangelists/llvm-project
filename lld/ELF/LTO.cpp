@@ -76,6 +76,32 @@ static lto::Config createConfig() {
   c.Options.FunctionSections = true;
   c.Options.DataSections = true;
 
+  // Check if basic block sections must be used.
+  // Allowed values for --lto-basicblock-sections are "all", "labels",
+  // "<file name specifying basic block ids>", or none.  This is the equivalent
+  // of -fbasicblock-sections= flag in clang.
+  if (!config->ltoBasicBlockSections.empty()) {
+    if (config->ltoBasicBlockSections == "all") {
+      c.Options.BBSections = BasicBlockSection::All;
+    } else if (config->ltoBasicBlockSections == "labels") {
+      c.Options.BBSections = BasicBlockSection::Labels;
+    } else if (config->ltoBasicBlockSections == "none") {
+      c.Options.BBSections = BasicBlockSection::None;
+    } else {
+      ErrorOr<std::unique_ptr<MemoryBuffer>> MBOrErr =
+          MemoryBuffer::getFile(config->ltoBasicBlockSections.str());
+      if (!MBOrErr) {
+        error("cannot open " + config->ltoBasicBlockSections + ":" +
+              MBOrErr.getError().message());
+      } else {
+        c.Options.BBSectionsFuncListBuf = std::move(*MBOrErr);
+      }
+      c.Options.BBSections = BasicBlockSection::List;
+    }
+  }
+
+  c.Options.UniqueBBSectionNames = config->ltoUniqueBBSectionNames;
+
   if (auto relocModel = getRelocModelFromCMModel())
     c.RelocModel = *relocModel;
   else if (config->relocatable)
@@ -126,6 +152,9 @@ static lto::Config createConfig() {
       return false;
     };
   }
+
+  if (config->ltoEmitAsm)
+    c.CGFileType = CGFT_AssemblyFile;
 
   if (config->saveTemps)
     checkError(c.addSaveTemps(config->outputFile.str() + ".",
@@ -301,6 +330,13 @@ std::vector<InputFile *> BitcodeCompiler::compile() {
     saveBuffer(buf[0], config->outputFile + ".lto.o");
     for (unsigned i = 1; i != maxTasks; ++i)
       saveBuffer(buf[i], config->outputFile + Twine(i) + ".lto.o");
+  }
+
+  if (config->ltoEmitAsm) {
+    saveBuffer(buf[0], config->outputFile);
+    for (unsigned i = 1; i != maxTasks; ++i)
+      saveBuffer(buf[i], config->outputFile + Twine(i));
+    return {};
   }
 
   std::vector<InputFile *> ret;

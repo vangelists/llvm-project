@@ -25,9 +25,9 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--host', type=str, required=True)
-    parser.add_argument('--codesign_identity', type=str, required=False)
-    parser.add_argument('--dependencies', type=str, nargs='*', required=True)
-    parser.add_argument('--env', type=str, nargs='*', required=True)
+    parser.add_argument('--codesign_identity', type=str, required=False, default=None)
+    parser.add_argument('--dependencies', type=str, nargs='*', required=False, default=[])
+    parser.add_argument('--env', type=str, nargs='*', required=False, default=dict())
     (args, remaining) = parser.parse_known_args(sys.argv[1:])
 
     if len(remaining) < 2:
@@ -37,7 +37,7 @@ def main():
     commandLine = remaining[1:] # Skip the '--'
 
     ssh = lambda command: ['ssh', '-oBatchMode=yes', args.host, command]
-    scp = lambda src, dst: ['scp', '-oBatchMode=yes', src, '{}:{}'.format(args.host, dst)]
+    scp = lambda src, dst: ['scp', '-q', '-oBatchMode=yes', src, '{}:{}'.format(args.host, dst)]
 
     # Create a temporary directory where the test will be run.
     tmp = subprocess.check_output(ssh('mktemp -d /tmp/libcxx.XXXXXXXXXX'), universal_newlines=True).strip()
@@ -60,7 +60,8 @@ def main():
 
         # Ensure the test dependencies exist, tar them up and copy the tarball
         # over to the remote host.
-        with tempfile.NamedTemporaryFile(suffix='.tar') as tmpTar:
+        try:
+            tmpTar = tempfile.NamedTemporaryFile(suffix='.tar', delete=False)
             with tarfile.open(fileobj=tmpTar, mode='w') as tarball:
                 for dep in args.dependencies:
                     if not os.path.exists(dep):
@@ -68,9 +69,16 @@ def main():
                         return 1
                     tarball.add(dep, arcname=os.path.basename(dep))
 
+            # Make sure we close the file before we scp it, because accessing
+            # the temporary file while still open doesn't work on Windows.
+            tmpTar.close()
             remoteTarball = pathOnRemote(tmpTar.name)
-            tmpTar.flush()
             subprocess.check_call(scp(tmpTar.name, remoteTarball))
+        finally:
+            # Make sure we close the file in case an exception happens before
+            # we've closed it above -- otherwise close() is idempotent.
+            tmpTar.close()
+            os.remove(tmpTar.name)
 
         # Untar the dependencies in the temporary directory and remove the tarball.
         remoteCommands = [
@@ -89,10 +97,11 @@ def main():
         # host by transforming the path of test-executables to their path in the
         # temporary directory, where we know they have been copied when we handled
         # test dependencies above.
+        commandLine = (pathOnRemote(x) if isTestExe(x) else x for x in commandLine)
         remoteCommands += [
             'cd {}'.format(tmp),
             'export {}'.format(' '.join(args.env)),
-            ' '.join(pathOnRemote(x) if isTestExe(x) else x for x in commandLine)
+            subprocess.list2cmdline(commandLine)
         ]
 
         # Finally, SSH to the remote host and execute all the commands.

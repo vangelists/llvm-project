@@ -1,4 +1,4 @@
-# Introduction to MLIR Operation Traits
+# Operation Traits
 
 [TOC]
 
@@ -135,6 +135,17 @@ section goes as follows:
 *   `Header`
     -   (`C++ class` -- `ODS class`(if applicable))
 
+### AutomaticAllocationScope
+
+*   `OpTrait::AutomaticAllocationScope` -- `AutomaticAllocationScope`
+
+This trait is carried by region holding operations that define a new scope for
+automatic allocation. Such allocations are automatically freed when control is
+transferred back from the regions of such operations. As an example, allocations
+performed by [`std.alloca`](Dialects/Standard.md#stdalloca-allocaop) are
+automatically freed when control leaves the region of its closest surrounding op
+that has the trait AutomaticAllocationScope.
+
 ### Broadcastable
 
 *   `OpTrait::ResultsBroadcastableShape` -- `ResultsBroadcastableShape`
@@ -206,7 +217,23 @@ foo.region_op {
 ```
 
 This trait is an important structural property of the IR, and enables operations
-to have [passes](WritingAPass.md) scheduled under them.
+to have [passes](PassManagement.md) scheduled under them.
+
+
+### PolyhedralScope
+
+*   `OpTrait::PolyhedralScope` -- `PolyhedralScope`
+
+This trait is carried by region holding operations that define a new scope for
+the purposes of polyhedral optimization and the affine dialect in particular.
+Any SSA values of 'index' type that either dominate such operations, or are
+defined at the top-level of such operations, or appear as region arguments for
+such operations automatically become valid symbols for the polyhedral scope
+defined by that operation. As a result, such SSA values could be used as the
+operands or index operands of various affine dialect operations like affine.for,
+affine.load, and affine.store.  The polyhedral scope defined by an operation
+with this trait includes all operations in its region excluding operations that
+are nested inside of other operations that themselves have this trait.
 
 ### Single Block with Implicit Terminator
 

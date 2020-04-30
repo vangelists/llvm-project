@@ -79,7 +79,7 @@ SymbolTable::SymbolTable(Operation *symbolTableOp)
          "expected operation to have SymbolTable trait");
   assert(symbolTableOp->getNumRegions() == 1 &&
          "expected operation to have a single region");
-  assert(has_single_element(symbolTableOp->getRegion(0)) &&
+  assert(llvm::hasSingleElement(symbolTableOp->getRegion(0)) &&
          "expected operation to have a single block");
 
   for (auto &op : symbolTableOp->getRegion(0).front()) {
@@ -146,11 +146,6 @@ void SymbolTable::insert(Operation *symbol, Block::iterator insertPt) {
   setSymbolName(symbol, nameBuffer);
 }
 
-/// Returns true if the given operation defines a symbol.
-bool SymbolTable::isSymbol(Operation *op) {
-  return op->hasTrait<OpTrait::Symbol>() || getNameIfSymbol(op).hasValue();
-}
-
 /// Returns the name of the given symbol operation.
 StringRef SymbolTable::getSymbolName(Operation *symbol) {
   Optional<StringRef> name = getNameIfSymbol(symbol);
@@ -210,6 +205,35 @@ Operation *SymbolTable::getNearestSymbolTable(Operation *from) {
       return nullptr;
   }
   return from;
+}
+
+/// Walks all symbol table operations nested within, and including, `op`. For
+/// each symbol table operation, the provided callback is invoked with the op
+/// and a boolean signifying if the symbols within that symbol table can be
+/// treated as if all uses are visible. `allSymUsesVisible` identifies whether
+/// all of the symbol uses of symbols within `op` are visible.
+void SymbolTable::walkSymbolTables(
+    Operation *op, bool allSymUsesVisible,
+    function_ref<void(Operation *, bool)> callback) {
+  bool isSymbolTable = op->hasTrait<OpTrait::SymbolTable>();
+  if (isSymbolTable) {
+    SymbolOpInterface symbol = dyn_cast<SymbolOpInterface>(op);
+    allSymUsesVisible |= !symbol || symbol.isPrivate();
+  } else {
+    // Otherwise if 'op' is not a symbol table, any nested symbols are
+    // guaranteed to be hidden.
+    allSymUsesVisible = true;
+  }
+
+  for (Region &region : op->getRegions())
+    for (Block &block : region)
+      for (Operation &nestedOp : block)
+        walkSymbolTables(&nestedOp, allSymUsesVisible, callback);
+
+  // If 'op' had the symbol table trait, visit it after any nested symbol
+  // tables.
+  if (isSymbolTable)
+    callback(op, allSymUsesVisible);
 }
 
 /// Returns the operation registered with the given symbol name with the
@@ -286,11 +310,11 @@ Operation *SymbolTable::lookupNearestSymbolFrom(Operation *from,
 // SymbolTable Trait Types
 //===----------------------------------------------------------------------===//
 
-LogicalResult OpTrait::impl::verifySymbolTable(Operation *op) {
+LogicalResult detail::verifySymbolTable(Operation *op) {
   if (op->getNumRegions() != 1)
     return op->emitOpError()
            << "Operations with a 'SymbolTable' must have exactly one region";
-  if (!has_single_element(op->getRegion(0)))
+  if (!llvm::hasSingleElement(op->getRegion(0)))
     return op->emitOpError()
            << "Operations with a 'SymbolTable' must have exactly one block";
 
@@ -316,7 +340,7 @@ LogicalResult OpTrait::impl::verifySymbolTable(Operation *op) {
   return success();
 }
 
-LogicalResult OpTrait::impl::verifySymbol(Operation *op) {
+LogicalResult detail::verifySymbol(Operation *op) {
   // Verify the name attribute.
   if (!op->getAttrOfType<StringAttr>(mlir::SymbolTable::getSymbolAttrName()))
     return op->emitOpError() << "requires string attribute '"
@@ -441,7 +465,7 @@ static Optional<WalkResult> walkSymbolUses(
   return WalkResult::advance();
 }
 /// Walk all of the uses, for any symbol, that are nested within the given
-/// operaion 'from', invoking the provided callback for each. This does not
+/// operation 'from', invoking the provided callback for each. This does not
 /// traverse into any nested symbol tables.
 static Optional<WalkResult> walkSymbolUses(
     Operation *from,
@@ -477,8 +501,8 @@ struct SymbolScope {
   /// 'walkSymbolUses'.
   template <typename CallbackT,
             typename std::enable_if_t<!std::is_same<
-                typename FunctionTraits<CallbackT>::result_t, void>::value> * =
-                nullptr>
+                typename llvm::function_traits<CallbackT>::result_t,
+                void>::value> * = nullptr>
   Optional<WalkResult> walk(CallbackT cback) {
     if (Region *region = limit.dyn_cast<Region *>())
       return walkSymbolUses(*region, cback);
@@ -488,8 +512,8 @@ struct SymbolScope {
   /// void(SymbolTable::SymbolUse use)
   template <typename CallbackT,
             typename std::enable_if_t<std::is_same<
-                typename FunctionTraits<CallbackT>::result_t, void>::value> * =
-                nullptr>
+                typename llvm::function_traits<CallbackT>::result_t,
+                void>::value> * = nullptr>
   Optional<WalkResult> walk(CallbackT cback) {
     return walk([=](SymbolTable::SymbolUse use, ArrayRef<int>) {
       return cback(use), WalkResult::advance();
@@ -866,3 +890,10 @@ LogicalResult SymbolTable::replaceAllSymbolUses(Operation *oldSymbol,
                                                 Region *from) {
   return replaceAllSymbolUsesImpl(oldSymbol, newSymbol, from);
 }
+
+//===----------------------------------------------------------------------===//
+// Symbol Interfaces
+//===----------------------------------------------------------------------===//
+
+/// Include the generated symbol interfaces.
+#include "mlir/IR/SymbolInterfaces.cpp.inc"
