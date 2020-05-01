@@ -899,14 +899,18 @@ ThreadPlanInstructionTracer::ThreadPlanInstructionTracer(Thread &thread)
     m_current_tracepoint(Thread::InvalidTracepointID), m_bookmarks(),
     m_artificial_breakpoint_ids(), m_stepped_while_suspended(false),
     m_artificial_step(false), m_modified_heap(false),
-    m_emulating_stack_frames(false) {}
+    m_emulating_stack_frames(false) {
+  InitializeSpecialFunctionHandlers();
+}
 
 ThreadPlanInstructionTracer::ThreadPlanInstructionTracer(Thread &thread,
                                                          StreamSP &stream_sp)
   : ThreadPlanTracer(thread, stream_sp), m_thread(thread),
     m_current_tracepoint(Thread::InvalidTracepointID), m_bookmarks(),
     m_artificial_breakpoint_ids(), m_stepped_while_suspended(false),
-    m_artificial_step(false), m_emulating_stack_frames(false) {}
+    m_artificial_step(false), m_emulating_stack_frames(false) {
+  InitializeSpecialFunctionHandlers();
+}
 
 ThreadPlanInstructionTracer::~ThreadPlanInstructionTracer() {
   DisableTracing();
@@ -1022,7 +1026,6 @@ void ThreadPlanInstructionTracer::InitializeStaticMembersIfNeeded() {
     m_target = &m_thread.GetProcess()->GetTarget();
     m_disassembler_sp = Disassembler::FindPlugin(m_target->GetArchitecture(),
                                                  nullptr, nullptr);
-    InitializeSpecialFunctionHandlers();
   }
   m_tracers.try_emplace(m_thread.GetID(), this);
 }

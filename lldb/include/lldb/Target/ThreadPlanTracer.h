@@ -1230,13 +1230,13 @@ private:
   template <typename T>
   std::string TakeErrorString(llvm::Expected<T> &unexpected) const;
 
-  /// Initializes the static member of the tracer.
-  ///
-  void InitializeStaticMembersIfNeeded();
-
   /// Initializes the registry of special function handlers.
   ///
   void InitializeSpecialFunctionHandlers();
+
+  /// Initializes the static members of the tracer.
+  ///
+  void InitializeStaticMembersIfNeeded();
 
   /// Returns a pointer to the `ThreadPlanInstructionTracer` associated with the
   /// thread with the provided ID.
@@ -1261,11 +1261,6 @@ private:
                                    ///< tracers, to enable calling non-static
                                    ///< methods from static ones.
 
-  static inline SpecialFunctionHandlers
-  m_special_function_handlers; ///< Registry of handlers for calls that need
-                               ///< special handling, e.g. system calls or calls
-                               ///< to known memory manipulation functions.
-
   Thread &m_thread; ///< The thread that owns this tracer.
 
   Timeline m_timeline; ///< Holds the per-instruction snapshots that make up the
@@ -1282,6 +1277,14 @@ private:
                                                        ///< avoided symbols in
                                                        ///< order to resume
                                                        ///< tracing.
+
+  SpecialFunctionHandlers m_special_function_handlers; ///< Registry of handlers
+                                                       ///< for calls that need
+                                                       ///< special handling,
+                                                       ///< such as system calls
+                                                       ///< or calls to known
+                                                       ///< memory manipulation
+                                                       ///< functions.
 
   bool m_stepped_while_suspended; ///< Used to avoid capturing program state at
                                   ///< a particular point in time more than once
