@@ -2014,7 +2014,7 @@ class CommandObjectThreadTracingTracepointCurrent
 public:
   CommandObjectThreadTracingTracepointCurrent(CommandInterpreter &interpreter)
       : CommandObjectThreadRecordReplay(interpreter, "current-tracepoint",
-            "Get the ID of the current tracepoint.",
+            "Get the description of the current tracepoint.",
             "thread tracing current-tracepoint") {}
 
   ~CommandObjectThreadTracingTracepointCurrent() override = default;
@@ -2025,17 +2025,17 @@ protected:
       return false;
     }
     Thread &thread = m_exe_ctx.GetThreadRef();
-    Thread::TracepointID current_tracepoint = thread.GetCurrentTracepointID();
-    if (current_tracepoint != Thread::InvalidTracepointID) {
-      result.GetOutputStream().Format("Current tracepoint ID: {0}\n",
-                                      current_tracepoint);
+    llvm::Optional<std::string> current_tracepoint_description =
+        thread.GetCurrentTracepointDescription();
+    if (current_tracepoint_description) {
+      result.GetOutputStream().Format("{0}\n", *current_tracepoint_description);
       result.SetStatus(eReturnStatusSuccessFinishNoResult);
     } else {
-      assert("An invalid tracepoint ID should only be returned when tracing "
-             "is disabled!" && thread.TracingDisabled());
-      result.AppendError("Tracing must be enabled in order to get the current "
-                         "tracepoint ID (see \"help thread tracing\" for more "
-                         "information).");
+      assert("The current tracepoint description should only be missing when "
+             "tracing is disabled!" && thread.TracingDisabled());
+      result.AppendError("Tracing must be enabled in order to get the "
+                         "description of the current tracepoint (see \"help "
+                         "thread tracing\" for more information).");
       result.SetStatus(eReturnStatusFailed);
     }
     return true;

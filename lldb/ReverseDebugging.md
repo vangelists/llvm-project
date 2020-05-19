@@ -100,7 +100,7 @@ However, there is still lots of room for improvement and I will continue to look
 
 <details><summary>Navigating History</summary>
 
-* Get the ID of the current tracepoint (point in time within recorded history):
+* Get the description of the current tracepoint (point in time within recorded history):
 
     `thread tracing current-tracepoint`
 
@@ -292,7 +292,7 @@ When stepping backwards or replaying for one or more instrucitons, the state and
 
     Stepping backwards or forward within the recorded execution history means that the state of the heap must also be restored. This is accomplished by undoing or reapplying the modifications made by each store instruction sequentially, up to the point in time where the thread is restored.
 
-    If a heap region has since been unmapped, then the restoration of the old contents fails and the user is warned that all history assosciated with that particular heap region will be discarded, since it is no longer needed.
+    If a heap region has since been unmapped, then the restoration of the old contents fails and the user is warned that all history associated with that particular heap region will be discarded, since it is no longer needed.
 
     On the other side, if the heap region in question is still mapped and thus writable, but its contents have been invalidated or moved, e.g. through a call to `free()` or `realloc()`, respectively, then that particular heap region ends up in an undefined state, of which the user remains unaware.
 
@@ -318,9 +318,9 @@ In order to avoid a symbol, single-stepping and tracing are suspended before the
 
 ### Evaluating User Expressions
 
-As for symbols that are ignored, tracing and single-stepping are suspended before a user expression is evaluated and resumed write after the evaluation finishes.
+As for symbols that are ignored, tracing and single-stepping are suspended before a user expression is evaluated and resumed right after the evaluation finishes.
 
-In contrast to the avoided symbols, however, the state of the deepest (zeroth) stack frame, along with its assosciated registers and variables, is also restored after the evaluation finishes, in order to undo any modifications during the evaluation.
+In contrast to the avoided symbols, however, the state of the deepest (zeroth) stack frame, along with its associated registers and variables, is also restored after the evaluation finishes, in order to undo any modifications during the evaluation.
 
 
 ### Respecting Breakpoints
@@ -339,7 +339,7 @@ The user is also able to mark points of interest within the recorded history and
 
 Results of frequent and expensive computations are cached, aiming to improve tracing performance and consequently reduce the slowdown that is imposed on the target.
 
-For now, this translates to caching whether an address corrseponds to the heap or the stack and whether a symbol belongs to a library installed under `/usr/lib/`.
+For now, this translates to caching whether an address corresponds to the heap or the stack and whether a symbol belongs to a library installed under `/usr/lib/`.
 
 
 # Code Details
@@ -368,6 +368,12 @@ In no particular order:
 - [ ] Add support for additional platforms, e.g. Darwin on AArch64.
 - [ ] Add support for more languages, e.g. Swift or Rust.
 
+# Credits
+
+This work has been carried out by Vangelis Tsiatsianas at the Computer Science Department of the University of Crete, in partial fulfilment of the requirements for the Master's of Science degree, under the supervision of
+Prof. Anthony Savidis.
+
+Additionally, this work was supported by the Institute of Computer Science of FORTH under a graduate scholarship.
 
 # Contact
 

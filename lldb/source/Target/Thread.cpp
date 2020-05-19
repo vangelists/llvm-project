@@ -2192,6 +2192,11 @@ Thread::TracepointID Thread::GetCurrentTracepointID() {
   return GetPlans().GetBasePlanInstructionTracer()->GetCurrentTracepointID();
 }
 
+llvm::Optional<std::string> Thread::GetCurrentTracepointDescription() {
+  return GetPlans().GetBasePlanInstructionTracer()->
+      GetCurrentTracepointDescription();
+}
+
 Status Thread::JumpToTracepoint(TracepointID destination) {
   return GetPlans().GetBasePlanInstructionTracer()->
       JumpToTracepoint(destination);

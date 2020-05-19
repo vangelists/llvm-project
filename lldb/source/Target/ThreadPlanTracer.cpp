@@ -1211,6 +1211,31 @@ ThreadPlanInstructionTracer::GetCurrentTracepointID() const {
   return m_current_tracepoint;
 }
 
+llvm::Optional<std::string>
+ThreadPlanInstructionTracer::GetCurrentTracepointDescription() {
+  if (m_timeline.empty()) {
+    return {};
+  }
+
+  Tracepoint &tracepoint = m_timeline[m_current_tracepoint];
+  const addr_t recorded_pc = GetRecordedPCForStackFrame(tracepoint);
+
+  Address pc;
+  SymbolContext sc;
+  ExecutionContextScope *exe_scope = m_thread.CalculateProcess().get();
+
+  pc.SetOpcodeLoadAddress(recorded_pc, m_target);
+  pc.CalculateSymbolContext(&sc);
+
+  StreamString result;
+  result.Format("Tracepoint {0}/{1}: ", tracepoint.id, m_timeline.size() - 1);
+  sc.DumpStopContext(&result, exe_scope, pc, false, true, false, true, true);
+  result.PutCString(", address = ");
+  pc.Dump(&result, exe_scope, Address::DumpStyleLoadAddress);
+
+  return result.GetString().str();
+}
+
 Status ThreadPlanInstructionTracer::JumpToTracepoint(
     Thread::TracepointID destination) {
   if (destination >= m_timeline.size()) {
@@ -1231,16 +1256,17 @@ void ThreadPlanInstructionTracer::DumpSourceLocationInfo(Tracepoint &tracepoint,
     stream.PutCString("  ");
   }
 
-  const addr_t saved_pc = GetRecordedPCForStackFrame(tracepoint);
-  stream.Format("{0} ({1:x}): ", tracepoint.id, saved_pc);
+  const addr_t recorded_pc = GetRecordedPCForStackFrame(tracepoint);
 
   Address pc;
-  pc.SetOpcodeLoadAddress(saved_pc, m_target);
-
   SymbolContext sc;
+  ExecutionContextScope *exe_scope = m_thread.CalculateProcess().get();
+
+  pc.SetOpcodeLoadAddress(recorded_pc, m_target);
   pc.CalculateSymbolContext(&sc);
-  sc.DumpStopContext(&stream, m_thread.CalculateProcess().get(), pc, false,
-                     true, false, true, true);
+
+  stream.Format("{0} ({1:x}): ", tracepoint.id, recorded_pc);
+  sc.DumpStopContext(&stream, exe_scope, pc, false, true, false, true, true);
 }
 
 Status ThreadPlanInstructionTracer::CollectPastWriteLocations(

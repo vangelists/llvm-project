@@ -302,6 +302,13 @@ public:
   ///
   Thread::TracepointID GetCurrentTracepointID() const;
 
+  /// Returns the description of the currently active tracepoint.
+  ///
+  /// \return
+  ///     The description of the currently active tracepoint.
+  ///
+  llvm::Optional<std::string> GetCurrentTracepointDescription();
+
   /// Jumps to the given tracepoint.
   ///
   /// \param[in] destination
