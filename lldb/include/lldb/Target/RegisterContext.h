@@ -87,7 +87,8 @@ public:
 
   bool CopyFromRegisterContext(lldb::RegisterContextSP context);
 
-  RegisterValue &GetRecordedRegisterValue(std::size_t register_id);
+  llvm::Expected<RegisterValue &>
+  GetRecordedRegisterValue(std::size_t register_id);
 
   /// Convert from a given register numbering scheme to the lldb register
   /// numbering scheme

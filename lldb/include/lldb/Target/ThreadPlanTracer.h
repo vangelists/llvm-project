@@ -493,15 +493,15 @@ public:
   ///
   bool IsStackFrameStateEmulated() const;
 
-  /// Returns the recorded register values for the given stack frame.
+  /// Returns the recorded register values for the given stack frame, if any.
   ///
   /// \param[in] frame_idx
   ///     The index of the stack frame whose register values to get.
   ///
   /// \return
-  ///     The recorded register values for the given stack frame.
+  ///     The recorded register values for the given stack frame, if any.
   ///
-  const RegisterContext::SavedRegisterValues &
+  llvm::Expected<const RegisterContext::SavedRegisterValues &>
   GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx) const;
 
 protected:

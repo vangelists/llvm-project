@@ -2182,7 +2182,7 @@ bool Thread::IsStackFrameStateEmulated() {
   return GetPlans().GetBasePlanInstructionTracer()->IsStackFrameStateEmulated();
 }
 
-const RegisterContext::SavedRegisterValues &
+llvm::Expected<const RegisterContext::SavedRegisterValues &>
 Thread::GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx) {
   return GetPlans().GetBasePlanInstructionTracer()->
       GetRecordedRegisterValuesForStackFrame(frame_idx);

@@ -1157,7 +1157,7 @@ Status ThreadPlanInstructionTracer::JumpToBookmark(
   llvm::Expected<const Thread::TracingBookmark &> bookmark =
       GetBookmark(boookmark_id);
   if (!bookmark) {
-    return Status("Invalid bookmark ID.");
+    return Status(TakeErrorString(bookmark).c_str());
   }
   return JumpToTracepoint(bookmark->GetMarkedTracepointID());
 }
@@ -1195,11 +1195,15 @@ bool ThreadPlanInstructionTracer::IsStackFrameStateEmulated() const {
   return m_emulating_stack_frames;
 }
 
-const RegisterContext::SavedRegisterValues &
+llvm::Expected<const RegisterContext::SavedRegisterValues &>
 ThreadPlanInstructionTracer::GetRecordedRegisterValuesForStackFrame(
     std::size_t frame_idx) const {
   assert("Stack frame state is not restored!" && IsStackFrameStateEmulated());
-  return m_timeline[m_current_tracepoint].registers[frame_idx];
+  if (const RegisterValues &registers = m_timeline[m_current_tracepoint].registers;
+      frame_idx < registers.size()) {
+    return registers[frame_idx];
+  }
+  return MakeError("Stack frame does not exist.");
 }
 
 Thread::TracepointID
@@ -1456,7 +1460,7 @@ Status ThreadPlanInstructionTracer::ListVariableWriteLocations(
         location_string.Format("\n  ├─ Old value: {0}",
                                value_object->GetValueAsCString());
       } else {
-        location_string.PutCString("\n  ├─ Old value: ");
+        location_string.PutCString("\n  ├─ Old bytes: ");
         DumpHexBytes(&location_string, old_data.GetDataStart(),
                      old_data.GetByteSize(), old_data.GetByteSize(),
                      LLDB_INVALID_ADDRESS);
@@ -1467,7 +1471,7 @@ Status ThreadPlanInstructionTracer::ListVariableWriteLocations(
         location_string.Format("\n  └─ New value: {0}\n\n",
                                value_object->GetValueAsCString());
       } else {
-        location_string.PutCString("\n  └─ New value: ");
+        location_string.PutCString("\n  └─ New bytes: ");
         DumpHexBytes(&location_string, new_data.GetDataStart(),
                      new_data.GetByteSize(), new_data.GetByteSize(),
                      LLDB_INVALID_ADDRESS);

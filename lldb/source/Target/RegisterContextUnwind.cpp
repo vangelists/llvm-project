@@ -999,11 +999,17 @@ bool RegisterContextUnwind::ReadRegisterValueFromRegisterLocation(
   if (!IsValid())
     return false;
 
-  // If the stack frame state is being emulated as a result of a step back to
-  // mimic a previous point in time, fetch the restored register value directly.
+  // If the stack frame state is being emulated as a result of a step backwards
+  // or replay, fetch the restored register value directly.
   if (m_thread.IsStackFrameStateEmulated()) {
-    const uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
-    value.CopyValue(GetRecordedRegisterValue(register_number));
+    const uint32_t reg_num = reg_info->kinds[eRegisterKindLLDB];
+    llvm::Expected<RegisterValue &> recorded_reg_value =
+        GetRecordedRegisterValue(reg_num);
+    if (!recorded_reg_value) {
+      llvm::consumeError(std::move(recorded_reg_value.takeError()));
+      return false;
+    }
+    value.CopyValue(*recorded_reg_value);
     return true;
   }
 
@@ -1061,11 +1067,17 @@ bool RegisterContextUnwind::WriteRegisterValueToRegisterLocation(
   if (!IsValid())
     return false;
 
-  // If the stack frame state is being emulated as a result of a step back to
-  // mimic a previous point in time, overwrite the recorded register value.
+  // If the stack frame state is being emulated as a result of a step backwards
+  // or replay, overwrite the recorded register value.
   if (m_thread.IsStackFrameStateEmulated()) {
-    const uint32_t register_number = reg_info->kinds[eRegisterKindLLDB];
-    GetRecordedRegisterValue(register_number).CopyValue(value);
+    const uint32_t reg_num = reg_info->kinds[eRegisterKindLLDB];
+    llvm::Expected<RegisterValue &> recorded_reg_value =
+        GetRecordedRegisterValue(reg_num);
+    if (!recorded_reg_value) {
+      llvm::consumeError(std::move(recorded_reg_value.takeError()));
+      return false;
+    }
+    recorded_reg_value->CopyValue(value);
     return true;
   }
 

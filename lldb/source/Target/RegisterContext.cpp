@@ -408,11 +408,15 @@ bool RegisterContext::WriteAllRegisterValues(
   return WriteAllRegisterValues(reg_checkpoint.GetData());
 }
 
-RegisterValue &
+llvm::Expected<RegisterValue &>
 RegisterContext::GetRecordedRegisterValue(std::size_t register_id) {
   if (m_recorded_register_values.empty()) {
-    m_recorded_register_values =
+    llvm::Expected<const SavedRegisterValues&> recorded_register_values =
         m_thread.GetRecordedRegisterValuesForStackFrame(m_concrete_frame_idx);
+    if (!recorded_register_values) {
+      return recorded_register_values.takeError();
+    }
+    m_recorded_register_values = *recorded_register_values;
   }
   return m_recorded_register_values[register_id].value;
 }

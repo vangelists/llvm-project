@@ -790,14 +790,14 @@ public:
   ///     emulated by the tracer in order to mimic a previous point in time.
   bool IsStackFrameStateEmulated();
 
-  /// Returns the register values recorded by the tracer for the given frame.
+  /// Returns the register values recorded by the tracer for the given frame, if any.
   ///
   /// \param[in] frame_idx
   ///     The index of the frame whose recorded register values to get.
   ///
   /// \return
-  ///     The register values recorded by the tracer for the given frame.
-  const RegisterContext::SavedRegisterValues &
+  ///     The register values recorded by the tracer for the given frame, if any.
+  llvm::Expected<const RegisterContext::SavedRegisterValues &>
   GetRecordedRegisterValuesForStackFrame(std::size_t frame_idx);
 
   /// Returns the ID of the currently active tracepoint.
