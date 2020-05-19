@@ -10,7 +10,7 @@
 #include "mlir/Dialect/Affine/EDSC/Intrinsics.h"
 #include "mlir/Dialect/Linalg/EDSC/Builders.h"
 #include "mlir/Dialect/Linalg/EDSC/Intrinsics.h"
-#include "mlir/Dialect/LoopOps/EDSC/Builders.h"
+#include "mlir/Dialect/SCF/EDSC/Builders.h"
 #include "mlir/Dialect/StandardOps/EDSC/Intrinsics.h"
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/IR/AffineExpr.h"
@@ -19,7 +19,7 @@ using namespace mlir;
 using namespace mlir::edsc;
 using namespace mlir::edsc::intrinsics;
 using namespace mlir::linalg;
-using namespace mlir::loop;
+using namespace mlir::scf;
 
 mlir::edsc::LoopRangeBuilder::LoopRangeBuilder(Value *iv, Value range) {
   assert(range.getType() && "expected !linalg.range type");
@@ -31,7 +31,7 @@ mlir::edsc::LoopRangeBuilder::LoopRangeBuilder(Value *iv, Value range) {
   ForOp forOp = OperationBuilder<ForOp>(lb, ub, step);
   *iv = forOp.getInductionVar();
   auto *body = forOp.getBody();
-  enter(body, /*prev=*/1);
+  enter(body);
 }
 
 mlir::edsc::LoopRangeBuilder::LoopRangeBuilder(Value *iv,
@@ -39,7 +39,7 @@ mlir::edsc::LoopRangeBuilder::LoopRangeBuilder(Value *iv,
   ForOp forOp = OperationBuilder<ForOp>(range.offset, range.size, range.stride);
   *iv = forOp.getInductionVar();
   auto *body = forOp.getBody();
-  enter(body, /*prev=*/1);
+  enter(body);
 }
 
 Value mlir::edsc::LoopRangeBuilder::operator()(std::function<void(void)> fun) {
@@ -79,7 +79,7 @@ namespace mlir {
 namespace edsc {
 
 template <>
-GenericLoopNestRangeBuilder<loop::ForOp>::GenericLoopNestRangeBuilder(
+GenericLoopNestRangeBuilder<scf::ForOp>::GenericLoopNestRangeBuilder(
     MutableArrayRef<Value> ivs, ArrayRef<Value> ranges) {
   builder = std::make_unique<LoopNestRangeBuilder>(ivs, ranges);
 }
@@ -102,7 +102,7 @@ GenericLoopNestRangeBuilder<AffineForOp>::GenericLoopNestRangeBuilder(
 }
 
 template <>
-GenericLoopNestRangeBuilder<loop::ParallelOp>::GenericLoopNestRangeBuilder(
+GenericLoopNestRangeBuilder<scf::ParallelOp>::GenericLoopNestRangeBuilder(
     MutableArrayRef<Value> ivs, ArrayRef<Value> ranges) {
   SmallVector<Value, 4> lbs, ubs, steps;
   for (Value range : ranges) {
@@ -128,7 +128,7 @@ Operation *mlir::edsc::makeGenericLinalgOp(
     assert(!(outputs[i].getType().isa<RankedTensorType>() &&
              outputs[i + 1].getType().isa<MemRefType>()) &&
            "output tensors must be passed after output buffers");
-  auto &builder = edsc::ScopedContext::getBuilder();
+  auto &builder = edsc::ScopedContext::getBuilderRef();
   auto *ctx = builder.getContext();
   unsigned nInputs = inputs.size();
   unsigned nOutputs = outputs.size();
@@ -157,7 +157,7 @@ Operation *mlir::edsc::makeGenericLinalgOp(
       llvm::to_vector<8>(llvm::map_range(iteratorTypes, toString));
   // clang-format off
   auto *op =
-      edsc::ScopedContext::getBuilder()
+      edsc::ScopedContext::getBuilderRef()
           .create<linalg::GenericOp>(
               edsc::ScopedContext::getLocation(),
               types,

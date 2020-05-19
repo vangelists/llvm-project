@@ -23,13 +23,10 @@ struct PassManagerOptions {
       "pass-pipeline-crash-reproducer",
       llvm::cl::desc("Generate a .mlir reproducer file at the given output path"
                      " if the pass manager crashes or fails")};
-
-  //===--------------------------------------------------------------------===//
-  // Multi-threading
-  //===--------------------------------------------------------------------===//
-  llvm::cl::opt<bool> disableThreads{
-      "disable-pass-threading",
-      llvm::cl::desc("Disable multithreading in the pass manager"),
+  llvm::cl::opt<bool> localReproducer{
+      "pass-pipeline-local-reproducer",
+      llvm::cl::desc("When generating a crash reproducer, attempt to generated "
+                     "a reproducer with the smallest pipeline."),
       llvm::cl::init(false)};
 
   //===--------------------------------------------------------------------===//
@@ -156,11 +153,8 @@ void mlir::applyPassManagerCLOptions(PassManager &pm) {
 
   // Generate a reproducer on crash/failure.
   if (options->reproducerFile.getNumOccurrences())
-    pm.enableCrashReproducerGeneration(options->reproducerFile);
-
-  // Disable multi-threading.
-  if (options->disableThreads)
-    pm.disableMultithreading();
+    pm.enableCrashReproducerGeneration(options->reproducerFile,
+                                       options->localReproducer);
 
   // Enable statistics dumping.
   if (options->passStatistics)

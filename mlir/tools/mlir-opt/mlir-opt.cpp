@@ -42,7 +42,6 @@ void registerTestAffineDataCopyPass();
 void registerTestAllReduceLoweringPass();
 void registerTestAffineLoopUnswitchingPass();
 void registerTestBufferPlacementPreparationPass();
-void registerTestLinalgMatmulToVectorPass();
 void registerTestLoopPermutationPass();
 void registerTestCallGraphPass();
 void registerTestConstantFold();
@@ -54,6 +53,7 @@ void registerTestLinalgTransforms();
 void registerTestLivenessPass();
 void registerTestLoopFusion();
 void registerTestLoopMappingPass();
+void registerTestLoopUnrollingPass();
 void registerTestMatchers();
 void registerTestMemRefDependenceCheck();
 void registerTestMemRefStrideCalculation();
@@ -61,7 +61,7 @@ void registerTestOpaqueLoc();
 void registerTestParallelismDetection();
 void registerTestGpuParallelLoopMappingPass();
 void registerTestVectorConversions();
-void registerTestVectorToLoopsPass();
+void registerTestVectorToSCFPass();
 void registerVectorizerTestPass();
 } // namespace mlir
 
@@ -106,7 +106,6 @@ void registerTestPasses() {
   registerTestAffineDataCopyPass();
   registerTestAllReduceLoweringPass();
   registerTestAffineLoopUnswitchingPass();
-  registerTestLinalgMatmulToVectorPass();
   registerTestLoopPermutationPass();
   registerTestCallGraphPass();
   registerTestConstantFold();
@@ -121,6 +120,7 @@ void registerTestPasses() {
   registerTestLivenessPass();
   registerTestLoopFusion();
   registerTestLoopMappingPass();
+  registerTestLoopUnrollingPass();
   registerTestMatchers();
   registerTestMemRefDependenceCheck();
   registerTestMemRefStrideCalculation();
@@ -128,7 +128,7 @@ void registerTestPasses() {
   registerTestParallelismDetection();
   registerTestGpuParallelLoopMappingPass();
   registerTestVectorConversions();
-  registerTestVectorToLoopsPass();
+  registerTestVectorToSCFPass();
   registerVectorizerTestPass();
 }
 
@@ -152,9 +152,9 @@ int main(int argc, char **argv) {
   // Parse pass names in main to ensure static initialization completed.
   cl::ParseCommandLineOptions(argc, argv, "MLIR modular optimizer driver\n");
 
-  MLIRContext context;
   if(showDialects) {
     llvm::outs() << "Registered Dialects:\n";
+    MLIRContext context;
     for(Dialect *dialect : context.getRegisteredDialects()) {
       llvm::outs() << dialect->getNamespace() << "\n";
     }

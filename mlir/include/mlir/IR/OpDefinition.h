@@ -178,7 +178,7 @@ public:
   void setAttrs(ArrayRef<NamedAttribute> attributes) {
     state->setAttrs(attributes);
   }
-  void setAttrs(NamedAttributeList newAttrs) { state->setAttrs(newAttrs); }
+  void setAttrs(MutableDictionaryAttr newAttrs) { state->setAttrs(newAttrs); }
 
   /// Set the dialect attributes for this operation, and preserve all dependent.
   template <typename DialectAttrs> void setDialectAttrs(DialectAttrs &&attrs) {
@@ -187,10 +187,10 @@ public:
 
   /// Remove the attribute with the specified name if it exists.  The return
   /// value indicates whether the attribute was present or not.
-  NamedAttributeList::RemoveResult removeAttr(Identifier name) {
+  MutableDictionaryAttr::RemoveResult removeAttr(Identifier name) {
     return state->removeAttr(name);
   }
-  NamedAttributeList::RemoveResult removeAttr(StringRef name) {
+  MutableDictionaryAttr::RemoveResult removeAttr(StringRef name) {
     return state->removeAttr(Identifier::get(name, getContext()));
   }
 
@@ -582,6 +582,13 @@ template <typename ConcreteType>
 class OneRegion : public TraitBase<ConcreteType, OneRegion> {
 public:
   Region &getRegion() { return this->getOperation()->getRegion(0); }
+
+  /// Returns a range of operations within the region of this operation.
+  auto getOps() { return getRegion().getOps(); }
+  template <typename OpT>
+  auto getOps() {
+    return getRegion().template getOps<OpT>();
+  }
 
   static LogicalResult verifyTrait(Operation *op) {
     return impl::verifyOneRegion(op);
@@ -1038,9 +1045,9 @@ public:
 /// optimization purposes. Any SSA values of 'index' type that either dominate
 /// such an operation or are used at the top-level of such an operation
 /// automatically become valid symbols for the polyhedral scope defined by that
-/// operation. For more details, see `Traits.md#PolyhedralScope`.
+/// operation. For more details, see `Traits.md#AffineScope`.
 template <typename ConcreteType>
-class PolyhedralScope : public TraitBase<ConcreteType, PolyhedralScope> {
+class AffineScope : public TraitBase<ConcreteType, AffineScope> {
 public:
   static LogicalResult verifyTrait(Operation *op) {
     static_assert(!ConcreteType::template hasTrait<ZeroRegion>(),

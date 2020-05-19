@@ -14,9 +14,12 @@ namespace mlir {
 namespace edsc {
 namespace intrinsics {
 
+using std_addi = ValueBuilder<AddIOp>;
 using std_addf = ValueBuilder<AddFOp>;
 using std_alloc = ValueBuilder<AllocOp>;
+using std_alloca = ValueBuilder<AllocaOp>;
 using std_call = OperationBuilder<CallOp>;
+using std_create_complex = ValueBuilder<CreateComplexOp>;
 using std_constant = ValueBuilder<ConstantOp>;
 using std_constant_float = ValueBuilder<ConstantFloatOp>;
 using std_constant_index = ValueBuilder<ConstantIndexOp>;
@@ -24,13 +27,16 @@ using std_constant_int = ValueBuilder<ConstantIntOp>;
 using std_dealloc = OperationBuilder<DeallocOp>;
 using std_dim = ValueBuilder<DimOp>;
 using std_extract_element = ValueBuilder<ExtractElementOp>;
+using std_im = ValueBuilder<ImOp>;
 using std_index_cast = ValueBuilder<IndexCastOp>;
 using std_muli = ValueBuilder<MulIOp>;
 using std_mulf = ValueBuilder<MulFOp>;
 using std_memref_cast = ValueBuilder<MemRefCastOp>;
+using std_re = ValueBuilder<ReOp>;
 using std_ret = OperationBuilder<ReturnOp>;
 using std_select = ValueBuilder<SelectOp>;
 using std_load = ValueBuilder<LoadOp>;
+using std_splat = ValueBuilder<SplatOp>;
 using std_store = OperationBuilder<StoreOp>;
 using std_subi = ValueBuilder<SubIOp>;
 using std_sub_view = ValueBuilder<SubViewOp>;

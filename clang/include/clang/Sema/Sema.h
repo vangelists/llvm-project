@@ -555,6 +555,9 @@ public:
   PragmaStack<StringLiteral *> ConstSegStack;
   PragmaStack<StringLiteral *> CodeSegStack;
 
+  // This stack tracks the current state of Sema.CurFPFeatures.
+  PragmaStack<unsigned> FpPragmaStack;
+
   // RAII object to push / pop sentinel slots for all MS #pragma stacks.
   // Actions should be performed only if we enter / exit a C++ method body.
   class PragmaStackSentinelRAII {
@@ -1350,7 +1353,7 @@ public:
   /// should not be used elsewhere.
   void EmitCurrentDiagnostic(unsigned DiagID);
 
-  /// Records and restores the FPFeatures state on entry/exit of compound
+  /// Records and restores the CurFPFeatures state on entry/exit of compound
   /// statements.
   class FPFeaturesStateRAII {
   public:
@@ -1624,6 +1627,9 @@ public:
   QualType BuildVectorType(QualType T, Expr *VecSize, SourceLocation AttrLoc);
   QualType BuildExtVectorType(QualType T, Expr *ArraySize,
                               SourceLocation AttrLoc);
+  QualType BuildMatrixType(QualType T, Expr *NumRows, Expr *NumColumns,
+                           SourceLocation AttrLoc);
+
   QualType BuildAddressSpaceAttr(QualType &T, LangAS ASIdx, Expr *AddrSpace,
                                  SourceLocation AttrLoc);
 
@@ -3887,7 +3893,8 @@ public:
 
   /// Attempts to produce a RecoveryExpr after some AST node cannot be created.
   ExprResult CreateRecoveryExpr(SourceLocation Begin, SourceLocation End,
-                                ArrayRef<Expr *> SubExprs);
+                                ArrayRef<Expr *> SubExprs,
+                                QualType T = QualType());
 
   ObjCInterfaceDecl *getObjCInterfaceDecl(IdentifierInfo *&Id,
                                           SourceLocation IdLoc,
@@ -6387,14 +6394,9 @@ public:
   /// A diagnostic is emitted if it is not, false is returned, and
   /// PossibleNonPrimary will be set to true if the failure might be due to a
   /// non-primary expression being used as an atomic constraint.
-  bool CheckConstraintExpression(Expr *CE, Token NextToken = Token(),
+  bool CheckConstraintExpression(const Expr *CE, Token NextToken = Token(),
                                  bool *PossibleNonPrimary = nullptr,
                                  bool IsTrailingRequiresClause = false);
-
-  /// Check whether the given type-dependent expression will be the name of a
-  /// function or another callable function-like entity (e.g. a function
-  // template or overload set) for any substitution.
-  bool IsDependentFunctionNameExpr(Expr *E);
 
 private:
   /// Caches pairs of template-like decls whose associated constraints were
@@ -9566,6 +9568,18 @@ public:
   void ActOnPragmaDetectMismatch(SourceLocation Loc, StringRef Name,
                                  StringRef Value);
 
+  /// Are precise floating point semantics currently enabled?
+  bool isPreciseFPEnabled() {
+    return !CurFPFeatures.allowAssociativeMath() &&
+           !CurFPFeatures.noSignedZeros() &&
+           !CurFPFeatures.allowReciprocalMath() &&
+           !CurFPFeatures.allowApproximateFunctions();
+  }
+
+  /// ActOnPragmaFloatControl - Call on well-formed \#pragma float_control
+  void ActOnPragmaFloatControl(SourceLocation Loc, PragmaMsStackAction Action,
+                               PragmaFloatControlKind Value);
+
   /// ActOnPragmaUnused - Called on well-formed '\#pragma unused'.
   void ActOnPragmaUnused(const Token &Identifier,
                          Scope *curScope,
@@ -9602,11 +9616,15 @@ public:
   /// ActOnPragmaFPContract - Called on well formed
   /// \#pragma {STDC,OPENCL} FP_CONTRACT and
   /// \#pragma clang fp contract
-  void ActOnPragmaFPContract(LangOptions::FPContractModeKind FPC);
+  void ActOnPragmaFPContract(LangOptions::FPModeKind FPC);
+
+  /// Called on well formed
+  /// \#pragma clang fp reassociate
+  void ActOnPragmaFPReassociate(bool IsEnabled);
 
   /// ActOnPragmaFenvAccess - Called on well formed
   /// \#pragma STDC FENV_ACCESS
-  void ActOnPragmaFEnvAccess(LangOptions::FEnvAccessModeKind FPC);
+  void ActOnPragmaFEnvAccess(SourceLocation Loc, bool IsEnabled);
 
   /// Called to set rounding mode for floating point operations.
   void setRoundingMode(llvm::RoundingMode);
@@ -10766,6 +10784,21 @@ public:
                                           SourceLocation LParenLoc,
                                           SourceLocation EndLoc);
 
+  /// Data for list of allocators.
+  struct UsesAllocatorsData {
+    /// Allocator.
+    Expr *Allocator = nullptr;
+    /// Allocator traits.
+    Expr *AllocatorTraits = nullptr;
+    /// Locations of '(' and ')' symbols.
+    SourceLocation LParenLoc, RParenLoc;
+  };
+  /// Called on well-formed 'uses_allocators' clause.
+  OMPClause *ActOnOpenMPUsesAllocatorClause(SourceLocation StartLoc,
+                                            SourceLocation LParenLoc,
+                                            SourceLocation EndLoc,
+                                            ArrayRef<UsesAllocatorsData> Data);
+
   /// The kind of conversion being performed.
   enum CheckedConversionKind {
     /// An implicit conversion.
@@ -10822,9 +10855,8 @@ public:
                                                   bool Diagnose = true);
 
   // DefaultLvalueConversion - performs lvalue-to-rvalue conversion on
-  // the operand.  This is DefaultFunctionArrayLvalueConversion,
-  // except that it assumes the operand isn't of function or array
-  // type.
+  // the operand. This function is a no-op if the operand has a function type
+  // or an array type.
   ExprResult DefaultLvalueConversion(Expr *E);
 
   // DefaultArgumentPromotion (C99 6.5.2.2p6). Used for function calls that
@@ -11633,6 +11665,8 @@ public:
     return IdentifyCUDATarget(dyn_cast<FunctionDecl>(CurContext));
   }
 
+  static bool IsCUDAImplicitHostDeviceFunction(const FunctionDecl *D);
+
   // CUDA function call preference. Must be ordered numerically from
   // worst to best.
   enum CUDAFunctionPreference {
@@ -11969,6 +12003,10 @@ private:
 
   ExprResult CheckBuiltinFunctionCall(FunctionDecl *FDecl,
                                       unsigned BuiltinID, CallExpr *TheCall);
+
+  bool CheckTSBuiltinFunctionCall(llvm::Triple::ArchType Arch,
+                                  unsigned BuiltinID, CallExpr *TheCall);
+
   void checkFortifiedBuiltinMemoryFunction(FunctionDecl *FD, CallExpr *TheCall);
 
   bool CheckARMBuiltinExclusiveCall(unsigned BuiltinID, CallExpr *TheCall,

@@ -44,7 +44,6 @@ add_clang_library(clangDaemon
   FileDistance.cpp
   Format.cpp
   FS.cpp
-  FormattedString.cpp
   FuzzyMatch.cpp
   GlobalCompilationDatabase.cpp
   Headers.cpp
@@ -114,6 +113,7 @@ add_clang_library(clangDaemon
   clangToolingRefactoring
   clangToolingSyntax
   clangdSupport
+  ${LLVM_PTHREAD_LIB}
   ${ALL_CLANG_TIDY_CHECKS}
   )
 

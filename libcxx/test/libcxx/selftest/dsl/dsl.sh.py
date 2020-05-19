@@ -6,11 +6,11 @@
 #
 #===----------------------------------------------------------------------===##
 
-# RUN: %{python} '%s' '%S' '%T' '%{escaped_exec}' \
-# RUN:                          '%{escaped_cxx}' \
-# RUN:                          '%{escaped_flags}' \
-# RUN:                          '%{escaped_compile_flags}' \
-# RUN:                          '%{escaped_link_flags}'
+# RUN: %{python} %s %S %T %{escaped_exec} \
+# RUN:                    %{escaped_cxx} \
+# RUN:                    %{escaped_flags} \
+# RUN:                    %{escaped_compile_flags} \
+# RUN:                    %{escaped_link_flags}
 # END.
 
 import base64
@@ -29,11 +29,12 @@ sys.path = [os.path.join(monorepoRoot, 'libcxx', 'utils'),
             os.path.join(monorepoRoot, 'llvm', 'utils', 'lit')] + sys.path
 import libcxx.test.dsl as dsl
 import lit.LitConfig
+import lit.util
 
 # Steal some parameters from the config running this test so that we can
 # bootstrap our own TestingConfig.
-SOURCE_ROOT, EXEC_PATH, EXEC, CXX, FLAGS, COMPILE_FLAGS, LINK_FLAGS = sys.argv[1:]
-sys.argv = sys.argv[:1]
+SOURCE_ROOT, EXEC_PATH, EXEC, CXX, FLAGS, COMPILE_FLAGS, LINK_FLAGS = sys.argv[1:8]
+sys.argv[1:8] = []
 
 class SetupConfigs(unittest.TestCase):
     """
@@ -60,7 +61,7 @@ class SetupConfigs(unittest.TestCase):
         self.config = lit.TestingConfig.TestingConfig.fromdefaults(self.litConfig)
         self.config.test_source_root = SOURCE_ROOT
         self.config.test_exec_root = EXEC_PATH
-        base64Decode = lambda s: base64.b64decode(s.encode()).decode()
+        base64Decode = lambda s: lit.util.to_string(base64.b64decode(s))
         self.config.substitutions = [
             ('%{cxx}', base64Decode(CXX)),
             ('%{flags}', base64Decode(FLAGS)),
@@ -184,6 +185,13 @@ class TestFeature(SetupConfigs):
         self.assertIn('-foo', self.getSubstitution('%{compile_flags}'))
         self.assertEqual(origLinkFlags, self.getSubstitution('%{link_flags}'))
 
+    def test_compile_flag_can_be_a_callable(self):
+        feature = dsl.Feature(name='name',
+                              compileFlag=lambda cfg: (self.assertIs(self.config, cfg), '-foo')[1])
+        assert feature.isSupported(self.config)
+        feature.enableIn(self.config)
+        self.assertIn('-foo', self.getSubstitution('%{compile_flags}'))
+
     def test_adding_link_flag(self):
         feature = dsl.Feature(name='name', linkFlag='-foo')
         origCompileFlags = copy.deepcopy(self.getSubstitution('%{compile_flags}'))
@@ -192,6 +200,13 @@ class TestFeature(SetupConfigs):
         self.assertIn('name', self.config.available_features)
         self.assertIn('-foo', self.getSubstitution('%{link_flags}'))
         self.assertEqual(origCompileFlags, self.getSubstitution('%{compile_flags}'))
+
+    def test_link_flag_can_be_a_callable(self):
+        feature = dsl.Feature(name='name',
+                              linkFlag=lambda cfg: (self.assertIs(self.config, cfg), '-foo')[1])
+        assert feature.isSupported(self.config)
+        feature.enableIn(self.config)
+        self.assertIn('-foo', self.getSubstitution('%{link_flags}'))
 
     def test_adding_both_flags(self):
         feature = dsl.Feature(name='name', compileFlag='-hello', linkFlag='-world')

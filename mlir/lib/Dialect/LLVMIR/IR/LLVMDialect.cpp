@@ -92,8 +92,8 @@ static ParseResult parseCmpOp(OpAsmParser &parser, OperationState &result) {
     predicateValue = static_cast<int64_t>(predicate.getValue());
   }
 
-  result.attributes[0].second =
-      parser.getBuilder().getI64IntegerAttr(predicateValue);
+  result.attributes.set("predicate",
+                        parser.getBuilder().getI64IntegerAttr(predicateValue));
 
   // The result type is either i1 or a vector type <? x i1> if the inputs are
   // vectors.
@@ -160,23 +160,21 @@ static ParseResult parseAllocaOp(OpAsmParser &parser, OperationState &result) {
 // LLVM::BrOp
 //===----------------------------------------------------------------------===//
 
-Optional<OperandRange> BrOp::getSuccessorOperands(unsigned index) {
+Optional<MutableOperandRange>
+BrOp::getMutableSuccessorOperands(unsigned index) {
   assert(index == 0 && "invalid successor index");
-  return getOperands();
+  return destOperandsMutable();
 }
-
-bool BrOp::canEraseSuccessorOperand() { return true; }
 
 //===----------------------------------------------------------------------===//
 // LLVM::CondBrOp
 //===----------------------------------------------------------------------===//
 
-Optional<OperandRange> CondBrOp::getSuccessorOperands(unsigned index) {
+Optional<MutableOperandRange>
+CondBrOp::getMutableSuccessorOperands(unsigned index) {
   assert(index < getNumSuccessors() && "invalid successor index");
-  return index == 0 ? trueDestOperands() : falseDestOperands();
+  return index == 0 ? trueDestOperandsMutable() : falseDestOperandsMutable();
 }
-
-bool CondBrOp::canEraseSuccessorOperand() { return true; }
 
 //===----------------------------------------------------------------------===//
 // Printing/parsing for LLVM::LoadOp.
@@ -257,12 +255,11 @@ static ParseResult parseStoreOp(OpAsmParser &parser, OperationState &result) {
 /// LLVM::InvokeOp
 ///===---------------------------------------------------------------------===//
 
-Optional<OperandRange> InvokeOp::getSuccessorOperands(unsigned index) {
+Optional<MutableOperandRange>
+InvokeOp::getMutableSuccessorOperands(unsigned index) {
   assert(index < getNumSuccessors() && "invalid successor index");
-  return index == 0 ? normalDestOperands() : unwindDestOperands();
+  return index == 0 ? normalDestOperandsMutable() : unwindDestOperandsMutable();
 }
-
-bool InvokeOp::canEraseSuccessorOperand() { return true; }
 
 static LogicalResult verify(InvokeOp op) {
   if (op.getNumResults() > 1)
@@ -428,9 +425,8 @@ static LogicalResult verify(LandingpadOp op) {
     } else {
       // catch - global addresses only.
       // Bitcast ops should have global addresses as their args.
-      if (auto bcOp = dyn_cast_or_null<BitcastOp>(value.getDefiningOp())) {
-        if (auto addrOp =
-                dyn_cast_or_null<AddressOfOp>(bcOp.arg().getDefiningOp()))
+      if (auto bcOp = value.getDefiningOp<BitcastOp>()) {
+        if (auto addrOp = bcOp.arg().getDefiningOp<AddressOfOp>())
           continue;
         return op.emitError("constant clauses expected")
                    .attachNote(bcOp.getLoc())
@@ -438,9 +434,9 @@ static LogicalResult verify(LandingpadOp op) {
                   "bitcast used in clauses for landingpad";
       }
       // NullOp and AddressOfOp allowed
-      if (dyn_cast_or_null<NullOp>(value.getDefiningOp()))
+      if (value.getDefiningOp<NullOp>())
         continue;
-      if (dyn_cast_or_null<AddressOfOp>(value.getDefiningOp()))
+      if (value.getDefiningOp<AddressOfOp>())
         continue;
       return op.emitError("clause #")
              << idx << " is not a known constant - null, addressof, bitcast";
@@ -1173,7 +1169,7 @@ Block *LLVMFuncOp::addEntryBlock() {
 void LLVMFuncOp::build(OpBuilder &builder, OperationState &result,
                        StringRef name, LLVMType type, LLVM::Linkage linkage,
                        ArrayRef<NamedAttribute> attrs,
-                       ArrayRef<NamedAttributeList> argAttrs) {
+                       ArrayRef<MutableDictionaryAttr> argAttrs) {
   result.addRegion();
   result.addAttribute(SymbolTable::getSymbolAttrName(),
                       builder.getStringAttr(name));
@@ -1189,7 +1185,7 @@ void LLVMFuncOp::build(OpBuilder &builder, OperationState &result,
          "expected as many argument attribute lists as arguments");
   SmallString<8> argAttrName;
   for (unsigned i = 0; i < numInputs; ++i)
-    if (auto argDict = argAttrs[i].getDictionary())
+    if (auto argDict = argAttrs[i].getDictionary(builder.getContext()))
       result.addAttribute(getArgAttrName(i, argAttrName), argDict);
 }
 
@@ -1252,8 +1248,8 @@ static ParseResult parseLLVMFuncOp(OpAsmParser &parser,
 
   StringAttr nameAttr;
   SmallVector<OpAsmParser::OperandType, 8> entryArgs;
-  SmallVector<SmallVector<NamedAttribute, 2>, 1> argAttrs;
-  SmallVector<SmallVector<NamedAttribute, 2>, 1> resultAttrs;
+  SmallVector<NamedAttrList, 1> argAttrs;
+  SmallVector<NamedAttrList, 1> resultAttrs;
   SmallVector<Type, 8> argTypes;
   SmallVector<Type, 4> resultTypes;
   bool isVariadic;

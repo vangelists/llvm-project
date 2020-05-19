@@ -369,9 +369,9 @@ void UnwrappedLineParser::parseLevel(bool HasOpeningBrace) {
   bool SwitchLabelEncountered = false;
   do {
     tok::TokenKind kind = FormatTok->Tok.getKind();
-    if (FormatTok->Type == TT_MacroBlockBegin) {
+    if (FormatTok->getType() == TT_MacroBlockBegin) {
       kind = tok::l_brace;
-    } else if (FormatTok->Type == TT_MacroBlockEnd) {
+    } else if (FormatTok->getType() == TT_MacroBlockEnd) {
       kind = tok::r_brace;
     }
 
@@ -1033,11 +1033,11 @@ void UnwrappedLineParser::parseStructuralElement() {
   case tok::kw_asm:
     nextToken();
     if (FormatTok->is(tok::l_brace)) {
-      FormatTok->Type = TT_InlineASMBrace;
+      FormatTok->setType(TT_InlineASMBrace);
       nextToken();
       while (FormatTok && FormatTok->isNot(tok::eof)) {
         if (FormatTok->is(tok::r_brace)) {
-          FormatTok->Type = TT_InlineASMBrace;
+          FormatTok->setType(TT_InlineASMBrace);
           nextToken();
           addUnwrappedLine();
           break;
@@ -1342,7 +1342,7 @@ void UnwrappedLineParser::parseStructuralElement() {
         // for them (the one we know is missing are lambdas).
         if (Style.BraceWrapping.AfterFunction)
           addUnwrappedLine();
-        FormatTok->Type = TT_FunctionLBrace;
+        FormatTok->setType(TT_FunctionLBrace);
         parseBlock(/*MustBeDeclaration=*/false);
         addUnwrappedLine();
         return;
@@ -1471,7 +1471,7 @@ void UnwrappedLineParser::parseStructuralElement() {
       } else if (Style.Language == FormatStyle::LK_Proto &&
                  FormatTok->Tok.is(tok::less)) {
         nextToken();
-        parseBracedList(/*ContinueOnSemicolons=*/false,
+        parseBracedList(/*ContinueOnSemicolons=*/false, /*IsEnum=*/false,
                         /*ClosingBraceKind=*/tok::greater);
       }
       break;
@@ -1531,6 +1531,8 @@ bool UnwrappedLineParser::tryToParsePropertyAccessor() {
   // Try to parse the property accessor:
   // https://docs.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/properties
   Tokens->setPosition(StoredPosition);
+  if (Style.BraceWrapping.AfterFunction == true)
+    addUnwrappedLine();
   nextToken();
   do {
     switch (FormatTok->Tok.getKind()) {
@@ -1646,6 +1648,7 @@ bool UnwrappedLineParser::tryToParseLambda() {
     case tok::lessequal:
     case tok::question:
     case tok::colon:
+    case tok::ellipsis:
     case tok::kw_true:
     case tok::kw_false:
       if (SeenArrow) {
@@ -1657,7 +1660,7 @@ bool UnwrappedLineParser::tryToParseLambda() {
       // This might or might not actually be a lambda arrow (this could be an
       // ObjC method invocation followed by a dereferencing arrow). We might
       // reset this back to TT_Unknown in TokenAnnotator.
-      FormatTok->Type = TT_LambdaArrow;
+      FormatTok->setType(TT_LambdaArrow);
       SeenArrow = true;
       nextToken();
       break;
@@ -1665,8 +1668,8 @@ bool UnwrappedLineParser::tryToParseLambda() {
       return true;
     }
   }
-  FormatTok->Type = TT_LambdaLBrace;
-  LSquare.Type = TT_LambdaLSquare;
+  FormatTok->setType(TT_LambdaLBrace);
+  LSquare.setType(TT_LambdaLSquare);
   parseChildBlock();
   return true;
 }
@@ -1699,7 +1702,7 @@ void UnwrappedLineParser::tryToParseJSFunction() {
 
   // Consume * (generator function). Treat it like C++'s overloaded operators.
   if (FormatTok->is(tok::star)) {
-    FormatTok->Type = TT_OverloadedOperator;
+    FormatTok->setType(TT_OverloadedOperator);
     nextToken();
   }
 
@@ -1744,6 +1747,7 @@ bool UnwrappedLineParser::tryToParseBracedList() {
 }
 
 bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
+                                          bool IsEnum,
                                           tok::TokenKind ClosingBraceKind) {
   bool HasError = false;
 
@@ -1784,6 +1788,8 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
       }
     }
     if (FormatTok->Tok.getKind() == ClosingBraceKind) {
+      if (IsEnum && !Style.AllowShortEnumsOnASingleLine)
+        addUnwrappedLine();
       nextToken();
       return !HasError;
     }
@@ -1820,7 +1826,7 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
     case tok::less:
       if (Style.Language == FormatStyle::LK_Proto) {
         nextToken();
-        parseBracedList(/*ContinueOnSemicolons=*/false,
+        parseBracedList(/*ContinueOnSemicolons=*/false, /*IsEnum=*/false,
                         /*ClosingBraceKind=*/tok::greater);
       } else {
         nextToken();
@@ -1842,6 +1848,8 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
       break;
     case tok::comma:
       nextToken();
+      if (IsEnum && !Style.AllowShortEnumsOnASingleLine)
+        addUnwrappedLine();
       break;
     default:
       nextToken();
@@ -2300,9 +2308,18 @@ bool UnwrappedLineParser::parseEnum() {
     return true;
   }
 
+  if (!Style.AllowShortEnumsOnASingleLine)
+    addUnwrappedLine();
   // Parse enum body.
   nextToken();
-  bool HasError = !parseBracedList(/*ContinueOnSemicolons=*/true);
+  if (!Style.AllowShortEnumsOnASingleLine) {
+    addUnwrappedLine();
+    Line->Level += 1;
+  }
+  bool HasError = !parseBracedList(/*ContinueOnSemicolons=*/true,
+                                   /*IsEnum=*/true);
+  if (!Style.AllowShortEnumsOnASingleLine)
+    Line->Level -= 1;
   if (HasError) {
     if (FormatTok->is(tok::semi))
       nextToken();
@@ -2384,9 +2401,10 @@ void UnwrappedLineParser::parseRecord(bool ParseAsExpr) {
 
   // The actual identifier can be a nested name specifier, and in macros
   // it is often token-pasted.
+  // An [[attribute]] can be before the identifier.
   while (FormatTok->isOneOf(tok::identifier, tok::coloncolon, tok::hashhash,
                             tok::kw___attribute, tok::kw___declspec,
-                            tok::kw_alignas) ||
+                            tok::kw_alignas, TT_AttributeSquare) ||
          ((Style.Language == FormatStyle::LK_Java ||
            Style.Language == FormatStyle::LK_JavaScript) &&
           FormatTok->isOneOf(tok::period, tok::comma))) {
@@ -2406,8 +2424,16 @@ void UnwrappedLineParser::parseRecord(bool ParseAsExpr) {
         FormatTok->TokenText != FormatTok->TokenText.upper();
     nextToken();
     // We can have macros or attributes in between 'class' and the class name.
-    if (!IsNonMacroIdentifier && FormatTok->Tok.is(tok::l_paren))
-      parseParens();
+    if (!IsNonMacroIdentifier) {
+      if (FormatTok->Tok.is(tok::l_paren)) {
+        parseParens();
+      } else if (FormatTok->is(TT_AttributeSquare)) {
+        parseSquare();
+        // Consume the closing TT_AttributeSquare.
+        if (FormatTok->Next && FormatTok->is(TT_AttributeSquare))
+          nextToken();
+      }
+    }
   }
 
   // Note that parsing away template declarations here leads to incorrectly
@@ -2660,8 +2686,8 @@ LLVM_ATTRIBUTE_UNUSED static void printDebugInfo(const UnwrappedLine &Line,
                                                     E = Line.Tokens.end();
        I != E; ++I) {
     llvm::dbgs() << I->Tok->Tok.getName() << "["
-                 << "T=" << I->Tok->Type << ", OC=" << I->Tok->OriginalColumn
-                 << "] ";
+                 << "T=" << I->Tok->getType()
+                 << ", OC=" << I->Tok->OriginalColumn << "] ";
   }
   for (std::list<UnwrappedLineNode>::const_iterator I = Line.Tokens.begin(),
                                                     E = Line.Tokens.end();
@@ -2932,18 +2958,19 @@ void UnwrappedLineParser::readToken(int LevelDifference) {
       flushComments(isOnNewLine(*FormatTok));
       parsePPDirective();
     }
-    while (FormatTok->Type == TT_ConflictStart ||
-           FormatTok->Type == TT_ConflictEnd ||
-           FormatTok->Type == TT_ConflictAlternative) {
-      if (FormatTok->Type == TT_ConflictStart) {
+    while (FormatTok->getType() == TT_ConflictStart ||
+           FormatTok->getType() == TT_ConflictEnd ||
+           FormatTok->getType() == TT_ConflictAlternative) {
+      if (FormatTok->getType() == TT_ConflictStart) {
         conditionalCompilationStart(/*Unreachable=*/false);
-      } else if (FormatTok->Type == TT_ConflictAlternative) {
+      } else if (FormatTok->getType() == TT_ConflictAlternative) {
         conditionalCompilationAlternative();
-      } else if (FormatTok->Type == TT_ConflictEnd) {
+      } else if (FormatTok->getType() == TT_ConflictEnd) {
         conditionalCompilationEnd();
       }
       FormatTok = Tokens->getNextToken();
       FormatTok->MustBreakBefore = true;
+      FormatTok->MustBreakAlignBefore = true;
     }
 
     if (!PPStack.empty() && (PPStack.back().Kind == PP_Unreachable) &&
@@ -2968,6 +2995,7 @@ void UnwrappedLineParser::pushToken(FormatToken *Tok) {
   Line->Tokens.push_back(UnwrappedLineNode(Tok));
   if (MustBreakBeforeNextToken) {
     Line->Tokens.back().Tok->MustBreakBefore = true;
+    Line->Tokens.back().Tok->MustBreakAlignBefore = true;
     MustBreakBeforeNextToken = false;
   }
 }
