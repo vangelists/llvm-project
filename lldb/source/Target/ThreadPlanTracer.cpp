@@ -1476,6 +1476,7 @@ Status ThreadPlanInstructionTracer::ListVariableWriteLocations(
 
     DataExtractor &old_data = old_value->data;
     DataExtractor &new_data = new_value->data;
+    ConstString variable_type = value_object->GetDisplayTypeName();
 
     StreamString location_string;
     DumpSourceLocationInfo(tracepoint, location_string);
@@ -1483,10 +1484,10 @@ Status ThreadPlanInstructionTracer::ListVariableWriteLocations(
     // Temporarily replace the current variable value with the recorded ones.
     if (value_object->SetData(old_data, error); error.Success()) {
       if (value_object->CanProvideValue()) {
-        location_string.Format("\n  ├─ Old value: {0}",
+        location_string.Format("\n  ├─ Old value ({0}): {1}", variable_type,
                                value_object->GetValueAsCString());
       } else {
-        location_string.PutCString("\n  ├─ Old bytes: ");
+        location_string.Format("\n  ├─ Old bytes ({0}): ", variable_type);
         DumpHexBytes(&location_string, old_data.GetDataStart(),
                      old_data.GetByteSize(), old_data.GetByteSize(),
                      LLDB_INVALID_ADDRESS);
@@ -1494,17 +1495,17 @@ Status ThreadPlanInstructionTracer::ListVariableWriteLocations(
     }
     if (value_object->SetData(new_data, error); error.Success()) {
       if (value_object->CanProvideValue()) {
-        location_string.Format("\n  └─ New value: {0}\n\n",
+        location_string.Format("\n  └─ New value ({0}): {1}", variable_type,
                                value_object->GetValueAsCString());
       } else {
-        location_string.PutCString("\n  └─ New bytes: ");
+        location_string.Format("\n  └─ New bytes ({0}): ", variable_type);
         DumpHexBytes(&location_string, new_data.GetDataStart(),
                      new_data.GetByteSize(), new_data.GetByteSize(),
                      LLDB_INVALID_ADDRESS);
-        location_string.PutCString("\n\n");
       }
     }
 
+    location_string.PutCString("\n\n");
     locations[tracepoint.id] = std::move(location_string.GetString().str());
 
     return (++found_locations == max_locations) ? Status()

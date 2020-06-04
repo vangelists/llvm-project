@@ -68,14 +68,18 @@ public:
     ///
     explicit StackFrameCheckpoint(StackFrame &frame);
 
+    /// Disable copy construction.
+    ///
+    StackFrameCheckpoint(const StackFrameCheckpoint &) = delete;
+
+    /// Disable copy assignment.
+    const StackFrameCheckpoint &
+    operator=(const StackFrameCheckpoint &) = delete;
+
     /// Enable move construction and assignment.
     ///
     StackFrameCheckpoint(StackFrameCheckpoint &&);
     StackFrameCheckpoint &operator=(StackFrameCheckpoint &&);
-
-    /// Disable copy construction and assignment.
-    ///
-    DISALLOW_COPY_AND_ASSIGN(StackFrameCheckpoint);
 
     /// Destructs this `StackFrameCheckpoint` object.
     ///

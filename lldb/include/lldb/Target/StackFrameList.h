@@ -28,14 +28,18 @@ public:
     ///
     explicit StackFrameListCheckpoint(StackFrameList &frame_list);
 
+    /// Disable copy construction.
+    ///
+    StackFrameListCheckpoint(const StackFrameListCheckpoint &) = delete;
+
+    /// Disable copy assignment.
+    const StackFrameListCheckpoint &
+    operator=(const StackFrameListCheckpoint &) = delete;
+
     /// Enable move construction and assignment.
     ///
     StackFrameListCheckpoint(StackFrameListCheckpoint &&);
     StackFrameListCheckpoint &operator=(StackFrameListCheckpoint &&);
-
-    /// Disable copy construction and assignment.
-    ///
-    DISALLOW_COPY_AND_ASSIGN(StackFrameListCheckpoint);
 
     /// Destructs this `StackFrameListCheckpoint` object.
     ///

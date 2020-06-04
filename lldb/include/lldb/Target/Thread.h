@@ -122,6 +122,13 @@ public:
     ///
     ~TracingBookmark();
 
+    /// Disable copy construction.
+    ///
+    TracingBookmark(const TracingBookmark &) = delete;
+
+    /// Disable copy assignment.
+    const TracingBookmark &operator=(const TracingBookmark &) = delete;
+
     /// Enable move construction.
     ///
     TracingBookmark(TracingBookmark &&);
@@ -197,8 +204,6 @@ public:
     TracepointID m_tracepoint_id; ///< The ID of the bookmarked tracepoint.
     std::string m_name; ///< The name of this bookmark.
     Address m_pc; ///< The value of PC at the bookmarked tracepoint.
-
-    DISALLOW_COPY_AND_ASSIGN(TracingBookmark);
   };
 
   using ΤracingBookmarkList =

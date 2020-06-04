@@ -50,6 +50,9 @@ public:
 
   virtual ~ThreadPlanTracer() = default;
 
+  ThreadPlanTracer(const ThreadPlanTracer &) = delete;
+  const ThreadPlanTracer &operator=(const ThreadPlanTracer &) = delete;
+
   virtual Type GetType() const;
 
   virtual void TracingStarted() {}
@@ -99,8 +102,6 @@ private:
 
   lldb::StreamSP m_stream_sp;
   Thread *m_thread;
-
-  DISALLOW_COPY_AND_ASSIGN(ThreadPlanTracer);
 };
 
 #pragma mark ThreadPlanAssemblyTracer
@@ -110,6 +111,10 @@ public:
   ThreadPlanAssemblyTracer(Thread &thread, lldb::StreamSP &stream_sp);
   ThreadPlanAssemblyTracer(Thread &thread);
   ~ThreadPlanAssemblyTracer() override;
+
+  ThreadPlanAssemblyTracer(const ThreadPlanAssemblyTracer &) = delete;
+  const ThreadPlanAssemblyTracer &
+  operator=(const ThreadPlanAssemblyTracer &) = delete;
 
   Type GetType() const override;
   void TracingEnded() override;
@@ -124,8 +129,6 @@ private:
   TypeFromUser m_intptr_type;
   std::vector<RegisterValue> m_register_values;
   lldb::DataBufferSP m_buffer_sp;
-
-  DISALLOW_COPY_AND_ASSIGN(ThreadPlanAssemblyTracer);
 };
 
 #pragma mark ThreadPlanInstructionTracer
@@ -158,6 +161,14 @@ public:
   /// Destructs this ThreadPlanInstructionTracer object.
   ///
   ~ThreadPlanInstructionTracer() override;
+
+  /// Disable copy construction.
+  ///
+  ThreadPlanInstructionTracer(const ThreadPlanInstructionTracer &) = delete;
+
+  /// Disable copy assignment.
+  const ThreadPlanInstructionTracer &
+  operator=(const ThreadPlanInstructionTracer &) = delete;
 
   /// Returns the type of this tracer (`eInstruction`).
   ///
@@ -569,18 +580,21 @@ private:
     ///
     HeapData(lldb::addr_t base, DataBufferHeap &&data);
 
+    /// Destructs this `HeapData` object.
+    ///
+    ~HeapData();
+
+    /// Disable copy construction.
+    ///
+    HeapData(const HeapData &) = delete;
+
+    /// Disable copy assignment.
+    const HeapData &operator=(const HeapData &) = delete;
+
     /// Enable move construction and assignment.
     ///
     HeapData(HeapData &&);
     HeapData &operator=(HeapData &&);
-
-    /// Disable copy construction and assignment.
-    ///
-    DISALLOW_COPY_AND_ASSIGN(HeapData);
-
-    /// Destructs this `HeapData` object.
-    ///
-    ~HeapData();
 
     /// Returns `true` if the given address is part of the saved heap region.
     ///
@@ -654,18 +668,21 @@ private:
                std::size_t completed_plan_checkpoint,
                uint32_t line = LLDB_INVALID_LINE_NUMBER);
 
+    /// Destructs this `Tracepoint` object.
+    ///
+    ~Tracepoint();
+
+    /// Disable copy construction.
+    ///
+    Tracepoint(const Tracepoint &) = delete;
+
+    /// Disable copy assignment.
+    const Tracepoint &operator=(const Tracepoint &) = delete;
+
     /// Enable move construction and assignment.
     ///
     Tracepoint(Tracepoint &&);
     Tracepoint &operator=(Tracepoint &&);
-
-    /// Disable copy construction and assignment.
-    ///
-    DISALLOW_COPY_AND_ASSIGN(Tracepoint);
-
-    /// Destructs this `Tracepoint` object.
-    ///
-    ~Tracepoint();
 
     Thread::TracepointID id; ///< The ID of this tracepoint.
     RegisterValues registers; ///< The values of stack frame registers.
@@ -1313,8 +1330,6 @@ private:
                                  ///< stack frames is currently being emulated
                                  ///< by this tracer in order to mimic a
                                  ///< previous point in time.
-
-  DISALLOW_COPY_AND_ASSIGN(ThreadPlanInstructionTracer);
 };
 
 } // namespace lldb_private
