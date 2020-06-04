@@ -26,6 +26,7 @@ Clang-Tidy Checks
    `abseil-redundant-strcat-calls <abseil-redundant-strcat-calls.html>`_, "Yes"
    `abseil-str-cat-append <abseil-str-cat-append.html>`_, "Yes"
    `abseil-string-find-startswith <abseil-string-find-startswith.html>`_, "Yes"
+   `abseil-string-find-str-contains <abseil-string-find-str-contains.html>`_, "Yes"
    `abseil-time-comparison <abseil-time-comparison.html>`_, "Yes"
    `abseil-time-subtraction <abseil-time-subtraction.html>`_, "Yes"
    `abseil-upgrade-duration-conversions <abseil-upgrade-duration-conversions.html>`_, "Yes"
@@ -298,6 +299,7 @@ Clang-Tidy Checks
    `readability-string-compare <readability-string-compare.html>`_, "Yes"
    `readability-uniqueptr-delete-release <readability-uniqueptr-delete-release.html>`_, "Yes"
    `readability-uppercase-literal-suffix <readability-uppercase-literal-suffix.html>`_, "Yes"
+   `readability-use-anyofallof`_, "No"
    `zircon-temporary-objects <zircon-temporary-objects.html>`_,
 
 

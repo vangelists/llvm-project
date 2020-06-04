@@ -223,7 +223,8 @@ protected:
                                                   // thread tracing is enabled.
 private:
   // For RegisterContext only
-  DISALLOW_COPY_AND_ASSIGN(RegisterContext);
+  RegisterContext(const RegisterContext &) = delete;
+  const RegisterContext &operator=(const RegisterContext &) = delete;
 };
 
 } // namespace lldb_private

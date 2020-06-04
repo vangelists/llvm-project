@@ -75,6 +75,13 @@ New module
 
 New checks
 ^^^^^^^^^^
+
+- New :doc:`abseil-string-find-str-contains
+  <clang-tidy/checks/abseil-string-find-str-contains>` check.
+
+  Finds ``s.find(...) == string::npos`` comparisons (for various string-like types)
+  and suggests replacing with ``absl::StrContains()``.
+
 - New :doc:`cppcoreguidelines-avoid-non-const-global-variables
   <clang-tidy/checks/cppcoreguidelines-avoid-non-const-global-variables>` check.
   Finds non-const global variables as described in check I.2 of C++ Core
@@ -144,6 +151,12 @@ New checks
 
   Finds calls to ``NSInvocation`` methods under ARC that don't have proper
   argument object lifetimes.
+
+- New :doc:`readability-use-anyofallof
+  <clang-tidy/checks/readability-use-anyofallof>` check.
+
+  Finds range-based for loops that can be replaced by a call to ``std::any_of``
+  or ``std::all_of``.
 
 New check aliases
 ^^^^^^^^^^^^^^^^^
