@@ -341,6 +341,43 @@ static bool getStatic(const ArgList &Args) {
       !Args.hasArg(options::OPT_static_pie);
 }
 
+void tools::gnutools::StaticLibTool::ConstructJob(
+    Compilation &C, const JobAction &JA, const InputInfo &Output,
+    const InputInfoList &Inputs, const ArgList &Args,
+    const char *LinkingOutput) const {
+  const Driver &D = getToolChain().getDriver();
+
+  // Silence warning for "clang -g foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_g_Group);
+  // and "clang -emit-llvm foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_emit_llvm);
+  // and for "clang -w foo.o -o foo". Other warning options are already
+  // handled somewhere else.
+  Args.ClaimAllArgs(options::OPT_w);
+  // Silence warnings when linking C code with a C++ '-stdlib' argument.
+  Args.ClaimAllArgs(options::OPT_stdlib_EQ);
+
+  // GNU ar tool command "ar <options> <output_file> <input_files>".
+  ArgStringList CmdArgs;
+  // Create and insert file members with a deterministic index.
+  CmdArgs.push_back("rcsD");
+  CmdArgs.push_back(Output.getFilename());
+  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
+
+  // Delete old output archive file if it already exists before generating a new
+  // archive file.
+  auto OutputFileName = Output.getFilename();
+  if (Output.isFilename() && llvm::sys::fs::exists(OutputFileName)) {
+    if (std::error_code EC = llvm::sys::fs::remove(OutputFileName)) {
+      D.Diag(diag::err_drv_unable_to_remove_file) << EC.message();
+      return;
+    }
+  }
+
+  const char *Exec = Args.MakeArgString(getToolChain().GetStaticLibToolPath());
+  C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+}
+
 void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                            const InputInfo &Output,
                                            const InputInfoList &Inputs,
@@ -624,10 +661,6 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("crtn.o")));
     }
   }
-
-  // Add HIP offloading linker script args if required.
-  AddHIPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA,
-                     *this);
 
   Args.AddAllArgs(CmdArgs, options::OPT_T);
 
@@ -2578,7 +2611,7 @@ bool Generic_GCC::GCCInstallationDetector::ScanGentooGccConfig(
 Generic_GCC::Generic_GCC(const Driver &D, const llvm::Triple &Triple,
                          const ArgList &Args)
     : ToolChain(D, Triple, Args), GCCInstallation(D),
-      CudaInstallation(D, Triple, Args) {
+      CudaInstallation(D, Triple, Args), RocmInstallation(D, Triple, Args) {
   getProgramPaths().push_back(getDriver().getInstalledDir());
   if (getDriver().getInstalledDir() != getDriver().Dir)
     getProgramPaths().push_back(getDriver().Dir);
@@ -2846,7 +2879,6 @@ static std::string DetectLibcxxIncludePath(llvm::vfs::FileSystem &vfs,
 void
 Generic_GCC::addLibCxxIncludePaths(const llvm::opt::ArgList &DriverArgs,
                                    llvm::opt::ArgStringList &CC1Args) const {
-  const std::string& SysRoot = getDriver().SysRoot;
   auto AddIncludePath = [&](std::string Path) {
     std::string IncludePath = DetectLibcxxIncludePath(getVFS(), Path);
     if (IncludePath.empty() || !getVFS().exists(IncludePath))
@@ -2862,6 +2894,7 @@ Generic_GCC::addLibCxxIncludePaths(const llvm::opt::ArgList &DriverArgs,
   // If this is a development, non-installed, clang, libcxx will
   // not be found at ../include/c++ but it likely to be found at
   // one of the following two locations:
+  std::string SysRoot = computeSysRoot();
   if (AddIncludePath(SysRoot + "/usr/local/include/c++"))
     return;
   if (AddIncludePath(SysRoot + "/usr/include/c++"))

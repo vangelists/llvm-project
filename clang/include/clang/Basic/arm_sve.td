@@ -48,6 +48,7 @@
 // f: float
 // h: half-float
 // d: double
+// b: bfloat
 
 // Typespec modifiers
 // ------------------
@@ -58,6 +59,7 @@
 // -------------------
 // prototype: return (arg, arg, ...)
 //
+// 2,3,4: array of default vectors
 // v: void
 // x: vector of signed integers
 // u: vector of unsigned integers
@@ -144,6 +146,7 @@ def EltTyBool8   : EltType<8>;
 def EltTyBool16  : EltType<9>;
 def EltTyBool32  : EltType<10>;
 def EltTyBool64  : EltType<11>;
+def EltTyBFloat16 : EltType<12>;
 
 class MemEltType<int val> {
   int Value = val;
@@ -198,6 +201,10 @@ def IsPrefetch                : FlagType<0x08000000>; // Contiguous prefetches.
 def IsGatherPrefetch          : FlagType<0x10000000>;
 def ReverseCompare            : FlagType<0x20000000>; // Compare operands must be swapped.
 def ReverseUSDOT              : FlagType<0x40000000>; // Unsigned/signed operands must be swapped.
+def IsUndef                   : FlagType<0x80000000>; // Codegen `undef` of given type.
+def IsTupleCreate             : FlagType<0x100000000>;
+def IsTupleGet                : FlagType<0x200000000>;
+def IsTupleSet                : FlagType<0x400000000>;
 
 // These must be kept in sync with the flags in include/clang/Basic/TargetBuiltins.h
 class ImmCheckType<int val> {
@@ -216,6 +223,9 @@ def ImmCheckLaneIndexDot        : ImmCheckType<9>;  // 0..(128/(4*sizeinbits(elt
 def ImmCheckComplexRot90_270    : ImmCheckType<10>; // [90,270]
 def ImmCheckComplexRotAll90     : ImmCheckType<11>; // [0, 90, 180,270]
 def ImmCheck0_13                : ImmCheckType<12>; // 0..13
+def ImmCheck0_1                 : ImmCheckType<13>; // 0..1
+def ImmCheck0_2                 : ImmCheckType<14>; // 0..2
+def ImmCheck0_3                 : ImmCheckType<15>; // 0..3
 
 class ImmCheck<int arg, ImmCheckType kind, int eltSizeArg = -1> {
   int Arg = arg;
@@ -470,10 +480,44 @@ def SVLDNT1_VNUM : MInst<"svldnt1_vnum[_{2}]", "dPcl", "csilUcUsUiUlhfd", [IsLoa
 // Load one quadword and replicate (scalar base)
 def SVLD1RQ : SInst<"svld1rq[_{2}]", "dPc", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_ld1rq">;
 
+multiclass StructLoad<string name, string proto, string i> {
+  def : SInst<name, proto, "csilUcUsUiUlhfd", MergeNone, i, [IsStructLoad]>;
+  let ArchGuard = "defined(__ARM_FEATURE_SVE_BF16)" in {
+    def: SInst<name, proto, "b", MergeNone, i, [IsStructLoad]>;
+  }
+}
+
+// Load N-element structure into N vectors (scalar base)
+defm SVLD2 : StructLoad<"svld2[_{2}]", "2Pc", "aarch64_sve_ld2">;
+defm SVLD3 : StructLoad<"svld3[_{2}]", "3Pc", "aarch64_sve_ld3">;
+defm SVLD4 : StructLoad<"svld4[_{2}]", "4Pc", "aarch64_sve_ld4">;
+
+// Load N-element structure into N vectors (scalar base, VL displacement)
+defm SVLD2_VNUM : StructLoad<"svld2_vnum[_{2}]", "2Pcl", "aarch64_sve_ld2">;
+defm SVLD3_VNUM : StructLoad<"svld3_vnum[_{2}]", "3Pcl", "aarch64_sve_ld3">;
+defm SVLD4_VNUM : StructLoad<"svld4_vnum[_{2}]", "4Pcl", "aarch64_sve_ld4">;
+
 // Load one octoword and replicate (scalar base)
 let ArchGuard = "defined(__ARM_FEATURE_SVE_MATMUL_FP64)" in {
   def SVLD1RO : SInst<"svld1ro[_{2}]", "dPc", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_ld1ro">;
 }
+let ArchGuard = "defined(__ARM_FEATURE_SVE_MATMUL_FP64) && defined(__ARM_FEATURE_SVE_BF16)" in {
+  def SVLD1RO_BF16 : SInst<"svld1ro[_{2}]", "dPc", "b", MergeNone, "aarch64_sve_ld1ro">;
+}
+
+let ArchGuard = "defined(__ARM_FEATURE_SVE_BF16)" in {
+  def SVBFDOT        : SInst<"svbfdot[_{0}]",        "MMdd",  "b", MergeNone, "aarch64_sve_bfdot",        [IsOverloadNone]>;
+  def SVBFMLALB      : SInst<"svbfmlalb[_{0}]",      "MMdd",  "b", MergeNone, "aarch64_sve_bfmlalb",      [IsOverloadNone]>;
+  def SVBFMLALT      : SInst<"svbfmlalt[_{0}]",      "MMdd",  "b", MergeNone, "aarch64_sve_bfmlalt",      [IsOverloadNone]>;
+  def SVBFMMLA       : SInst<"svbfmmla[_{0}]",       "MMdd",  "b", MergeNone, "aarch64_sve_bfmmla",       [IsOverloadNone]>;
+  def SVBFDOT_N      : SInst<"svbfdot[_n_{0}]",      "MMda",  "b", MergeNone, "aarch64_sve_bfdot",        [IsOverloadNone]>;
+  def SVBFMLAL_N     : SInst<"svbfmlalb[_n_{0}]",    "MMda",  "b", MergeNone, "aarch64_sve_bfmlalb",      [IsOverloadNone]>;
+  def SVBFMLALT_N    : SInst<"svbfmlalt[_n_{0}]",    "MMda",  "b", MergeNone, "aarch64_sve_bfmlalt",      [IsOverloadNone]>;
+  def SVBFDOT_LANE   : SInst<"svbfdot_lane[_{0}]",   "MMddn", "b", MergeNone, "aarch64_sve_bfdot_lane",   [IsOverloadNone], [ImmCheck<3, ImmCheck0_3>]>;
+  def SVBFMLALB_LANE : SInst<"svbfmlalb_lane[_{0}]", "MMddn", "b", MergeNone, "aarch64_sve_bfmlalb_lane", [IsOverloadNone], [ImmCheck<3, ImmCheck0_7>]>;
+  def SVBFMLALT_LANE : SInst<"svbfmlalt_lane[_{0}]", "MMddn", "b", MergeNone, "aarch64_sve_bfmlalt_lane", [IsOverloadNone], [ImmCheck<3, ImmCheck0_7>]>;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Stores
 
@@ -563,6 +607,22 @@ def SVST1H_SCATTER_32B_INDICES_UU : MInst<"svst1h_scatter_[{3}]index[_{d}]", "vP
 def SVST1_SCATTER_INDEX_S     : MInst<"svst1_scatter[_{2}base]_index[_{d}]",  "vPuld", "ilUiUlfd", [IsScatterStore], MemEltTyDefault, "aarch64_sve_st1_scatter_scalar_offset">;
 def SVST1H_SCATTER_INDEX_S    : MInst<"svst1h_scatter[_{2}base]_index[_{d}]", "vPuld", "ilUiUl",   [IsScatterStore], MemEltTyInt16,   "aarch64_sve_st1_scatter_scalar_offset">;
 def SVST1W_SCATTER_INDEX_S    : MInst<"svst1w_scatter[_{2}base]_index[_{d}]", "vPuld", "lUl",      [IsScatterStore], MemEltTyInt32,   "aarch64_sve_st1_scatter_scalar_offset">;
+
+multiclass StructStore<string name, string proto, string i> {
+  def : SInst<name, proto, "csilUcUsUiUlhfd", MergeNone, i, [IsStructStore]>;
+  let ArchGuard = "defined(__ARM_FEATURE_SVE_BF16)" in {
+    def: SInst<name, proto, "b", MergeNone, i, [IsStructStore]>;
+  }
+}
+// Store N vectors into N-element structure (scalar base)
+defm SVST2 : StructStore<"svst2[_{d}]", "vPp2", "aarch64_sve_st2">;
+defm SVST3 : StructStore<"svst3[_{d}]", "vPp3", "aarch64_sve_st3">;
+defm SVST4 : StructStore<"svst4[_{d}]", "vPp4", "aarch64_sve_st4">;
+
+// Store N vectors into N-element structure (scalar base, VL displacement)
+defm SVST2_VNUM : StructStore<"svst2_vnum[_{d}]", "vPpl2", "aarch64_sve_st2">;
+defm SVST3_VNUM : StructStore<"svst3_vnum[_{d}]", "vPpl3", "aarch64_sve_st3">;
+defm SVST4_VNUM : StructStore<"svst4_vnum[_{d}]", "vPpl4", "aarch64_sve_st4">;
 
 // Store one vector, with no truncation, non-temporal (scalar base)
 def SVSTNT1 : MInst<"svstnt1[_{d}]", "vPpd", "csilUcUsUiUlhfd", [IsStore], MemEltTyDefault, "aarch64_sve_stnt1">;
@@ -997,6 +1057,11 @@ defm SVFCVTZS_S64_F16 : SInstCvtMXZ<"svcvt_s64[_f16]", "ddPO", "dPO", "l",  "aar
 defm SVFCVTZS_S32_F32 : SInstCvtMXZ<"svcvt_s32[_f32]", "ddPM", "dPM", "i",  "aarch64_sve_fcvtzs", [IsOverloadCvt]>;
 defm SVFCVTZS_S64_F32 : SInstCvtMXZ<"svcvt_s64[_f32]", "ddPM", "dPM", "l",  "aarch64_sve_fcvtzs_i64f32">;
 
+let ArchGuard = "defined(__ARM_FEATURE_SVE_BF16)" in {
+  defm SVCVT_BF16_F32   : SInstCvtMXZ<"svcvt_bf16[_f32]",  "ddPM", "dPM", "b",  "aarch64_sve_fcvt_bf16f32">;
+  defm SVCVTNT_BF16_F32 : SInstCvtMX<"svcvtnt_bf16[_f32]", "ddPM", "dPM", "b",  "aarch64_sve_fcvtnt_bf16f32">;
+}
+
 // svcvt_s##_f64
 defm SVFCVTZS_S32_F64 : SInstCvtMXZ<"svcvt_s32[_f64]", "ttPd", "tPd", "d",  "aarch64_sve_fcvtzs_i32f64">;
 defm SVFCVTZS_S64_F64 : SInstCvtMXZ<"svcvt_s64[_f64]", "ddPN", "dPN", "l",  "aarch64_sve_fcvtzs", [IsOverloadCvt]>;
@@ -1262,8 +1327,35 @@ def SVMLLA_F32 : SInst<"svmmla[_f32]", "dddd","f", MergeNone, "aarch64_sve_fmmla
 
 let ArchGuard = "defined(__ARM_FEATURE_SVE_MATMUL_FP64)" in {
 def SVMLLA_F64 : SInst<"svmmla[_f64]", "dddd","d", MergeNone, "aarch64_sve_fmmla">;
+def SVTRN1Q      : SInst<"svtrn1q[_{d}]",     "ddd",  "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_trn1q">;
+def SVTRN2Q      : SInst<"svtrn2q[_{d}]",     "ddd",  "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_trn2q">;
+def SVUZP1Q      : SInst<"svuzp1q[_{d}]",     "ddd",  "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_uzp1q">;
+def SVUZP2Q      : SInst<"svuzp2q[_{d}]",     "ddd",  "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_uzp2q">;
+def SVZIP1Q      : SInst<"svzip1q[_{d}]",     "ddd",  "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_zip1q">;
+def SVZIP2Q      : SInst<"svzip2q[_{d}]",     "ddd",  "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_zip2q">;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Vector creation
+def SVUNDEF_1 : SInst<"svundef_{d}",  "d", "csilUcUsUiUlhfd", MergeNone, "", [IsUndef]>;
+def SVUNDEF_2 : SInst<"svundef2_{d}", "2", "csilUcUsUiUlhfd", MergeNone, "", [IsUndef]>;
+def SVUNDEF_3 : SInst<"svundef3_{d}", "3", "csilUcUsUiUlhfd", MergeNone, "", [IsUndef]>;
+def SVUNDEF_4 : SInst<"svundef4_{d}", "4", "csilUcUsUiUlhfd", MergeNone, "", [IsUndef]>;
+
+def SVCREATE_2 : SInst<"svcreate2[_{d}]", "2dd",   "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_create2", [IsTupleCreate]>;
+def SVCREATE_3 : SInst<"svcreate3[_{d}]", "3ddd",  "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_create3", [IsTupleCreate]>;
+def SVCREATE_4 : SInst<"svcreate4[_{d}]", "4dddd", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_create4", [IsTupleCreate]>;
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Vector insertion and extraction
+def SVGET_2 : SInst<"svget2[_{d}]", "d2i", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_get", [IsTupleGet], [ImmCheck<1, ImmCheck0_1>]>;
+def SVGET_3 : SInst<"svget3[_{d}]", "d3i", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_get", [IsTupleGet], [ImmCheck<1, ImmCheck0_2>]>;
+def SVGET_4 : SInst<"svget4[_{d}]", "d4i", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_get", [IsTupleGet], [ImmCheck<1, ImmCheck0_3>]>;
+
+def SVSET_2 : SInst<"svset2[_{d}]", "22id", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_set", [IsTupleSet], [ImmCheck<1, ImmCheck0_1>]>;
+def SVSET_3 : SInst<"svset3[_{d}]", "33id", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_set", [IsTupleSet], [ImmCheck<1, ImmCheck0_2>]>;
+def SVSET_4 : SInst<"svset4[_{d}]", "44id", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tuple_set", [IsTupleSet], [ImmCheck<1, ImmCheck0_3>]>;
 
 ////////////////////////////////////////////////////////////////////////////////
 // SVE2 WhileGE/GT
@@ -1824,6 +1916,7 @@ def SVWHILEWR_D : SInst<"svwhilewr[_{1}]", "Pcc", "lUld", MergeNone, "aarch64_sv
 ////////////////////////////////////////////////////////////////////////////////
 // SVE2 - Extended table lookup/permute
 let ArchGuard = "defined(__ARM_FEATURE_SVE2)" in {
+def SVTBL2 : SInst<"svtbl2[_{d}]", "d2u",  "csilUcUsUiUlhfd", MergeNone>;
 def SVTBX  : SInst<"svtbx[_{d}]",  "dddu", "csilUcUsUiUlhfd", MergeNone, "aarch64_sve_tbx">;
 }
 

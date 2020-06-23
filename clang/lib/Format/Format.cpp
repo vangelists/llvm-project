@@ -14,6 +14,7 @@
 
 #include "clang/Format/Format.h"
 #include "AffectedRangeManager.h"
+#include "BreakableToken.h"
 #include "ContinuationIndenter.h"
 #include "FormatInternal.h"
 #include "FormatTokenLexer.h"
@@ -1008,6 +1009,8 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
               "PARSE_TEXT_PROTO",
               "ParseTextOrDie",
               "ParseTextProtoOrDie",
+              "ParseTestProto",
+              "ParsePartialTestProto",
           },
           /*CanonicalDelimiter=*/"",
           /*BasedOnStyle=*/"google",
@@ -1068,6 +1071,12 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
     // #imports, etc.)
     GoogleStyle.IncludeStyle.IncludeBlocks =
         tooling::IncludeStyle::IBS_Preserve;
+  } else if (Language == FormatStyle::LK_CSharp) {
+    GoogleStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_Empty;
+    GoogleStyle.AllowShortIfStatementsOnASingleLine = FormatStyle::SIS_Never;
+    GoogleStyle.BreakStringLiterals = false;
+    GoogleStyle.ColumnLimit = 100;
+    GoogleStyle.NamespaceIndentation = FormatStyle::NI_All;
   }
 
   return GoogleStyle;

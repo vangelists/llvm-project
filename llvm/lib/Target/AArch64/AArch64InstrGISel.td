@@ -25,11 +25,52 @@ def G_ADD_LOW : AArch64GenericInstruction {
   let hasSideEffects = 0;
 }
 
+// Pseudo for a rev16 instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_REV16 : AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$src);
+  let hasSideEffects = 0;
+}
+
+// Pseudo for a rev32 instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_REV32 : AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$src);
+  let hasSideEffects = 0;
+}
+
+// Pseudo for a rev64 instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_REV64 : AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$src);
+  let hasSideEffects = 0;
+}
+
+// Represents an uzp1 instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_UZP1 : AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$v1, type0:$v2);
+  let hasSideEffects = 0;
+}
+
+// Represents an uzp2 instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_UZP2 : AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$v1, type0:$v2);
+  let hasSideEffects = 0;
+}
+
 // Represents a zip1 instruction. Produced post-legalization from
 // G_SHUFFLE_VECTORs with appropriate masks.
 def G_ZIP1 : AArch64GenericInstruction {
   let OutOperandList = (outs type0:$dst);
   let InOperandList = (ins type0:$v1, type0:$v2);
+  let hasSideEffects = 0;
 }
 
 // Represents a zip2 instruction. Produced post-legalization from
@@ -37,7 +78,47 @@ def G_ZIP1 : AArch64GenericInstruction {
 def G_ZIP2 : AArch64GenericInstruction {
   let OutOperandList = (outs type0:$dst);
   let InOperandList = (ins type0:$v1, type0:$v2);
+  let hasSideEffects = 0;
 }
 
+// Represents a dup instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_DUP: AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type1:$lane);
+  let hasSideEffects = 0;
+}
+// Represents a trn1 instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_TRN1 : AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$v1, type0:$v2);
+  let hasSideEffects = 0;
+}
+
+// Represents a trn2 instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_TRN2 : AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$v1, type0:$v2);
+  let hasSideEffects = 0;
+}
+
+// Represents an ext instruction. Produced post-legalization from
+// G_SHUFFLE_VECTORs with appropriate masks.
+def G_EXT: AArch64GenericInstruction {
+  let OutOperandList = (outs type0:$dst);
+  let InOperandList = (ins type0:$v1, type0:$v2, untyped_imm_0:$imm);
+}
+
+def : GINodeEquiv<G_REV16, AArch64rev16>;
+def : GINodeEquiv<G_REV32, AArch64rev32>;
+def : GINodeEquiv<G_REV64, AArch64rev64>;
+def : GINodeEquiv<G_UZP1, AArch64uzp1>;
+def : GINodeEquiv<G_UZP2, AArch64uzp2>;
 def : GINodeEquiv<G_ZIP1, AArch64zip1>;
 def : GINodeEquiv<G_ZIP2, AArch64zip2>;
+def : GINodeEquiv<G_DUP, AArch64dup>;
+def : GINodeEquiv<G_TRN1, AArch64trn1>;
+def : GINodeEquiv<G_TRN2, AArch64trn2>;
+def : GINodeEquiv<G_EXT, AArch64ext>;
