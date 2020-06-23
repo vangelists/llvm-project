@@ -1850,7 +1850,7 @@ protected:
 
     // Show source code at stop location, if available.
     StreamString cmd;
-    CommandReturnObject cmd_result;
+    CommandReturnObject cmd_result{true};
     cmd.Printf("source list -a 0x%llx", thread.GetRegisterContext()->GetPC());
     if (!m_interpreter.HandleCommand(cmd.GetData(), eLazyBoolNo, cmd_result)) {
       result.AppendMessage(cmd_result.GetErrorData());
@@ -1897,7 +1897,7 @@ protected:
   }
 
 private:
-  template<typename OptionType>
+  template <typename OptionType>
   OptionType ExtractOption(llvm::Optional<OptionType> option,
                            OptionType default_value) {
     return option ? *option : default_value;

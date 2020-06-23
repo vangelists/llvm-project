@@ -1223,8 +1223,7 @@ private:
   /// \return
   ///     The number of instructions to step back or replay.
   ///
-  template<typename TimelineIteratorType>
-  llvm::Expected<std::size_t>
+  template <typename TimelineIteratorType> llvm::Expected<std::size_t>
   TraverseTimeline(const TimelineIteratorType &current_tracepoint,
                    const TimelineIteratorType &timeline_limit,
                    TracepointCallback &&predicate,

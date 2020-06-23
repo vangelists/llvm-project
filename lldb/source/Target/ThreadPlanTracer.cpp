@@ -1567,7 +1567,7 @@ Status ThreadPlanInstructionTracer::ListHeapAddressWriteLocations(
 
 #pragma mark Navigating Recorded History
 
-template<typename TimelineIteratorType>
+template <typename TimelineIteratorType>
 llvm::Expected<std::size_t> ThreadPlanInstructionTracer::TraverseTimeline(
     const TimelineIteratorType &current_tracepoint,
     const TimelineIteratorType &timeline_limit, TracepointCallback &&predicate,
