@@ -8,7 +8,7 @@ gpu.module @test_module {
       -> (index, index, index, index, index, index,
           index, index, index, index, index, index) {
     // CHECK32-NOT: = llvm.sext %{{.*}} : !llvm.i32 to !llvm.i64
-    
+
     // CHECK: = nvvm.read.ptx.sreg.tid.x : !llvm.i32
     // CHECK: = llvm.sext %{{.*}} : !llvm.i32 to !llvm.i64
     %tIdX = "gpu.thread_id"() {dimension = "x"} : () -> (index)

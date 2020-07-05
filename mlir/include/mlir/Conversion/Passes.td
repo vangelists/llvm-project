@@ -318,6 +318,11 @@ def ConvertVectorToLLVM : Pass<"convert-vector-to-llvm", "ModuleOp"> {
   let summary = "Lower the operations from the vector dialect into the LLVM "
                 "dialect";
   let constructor = "mlir::createConvertVectorToLLVMPass()";
+  let options = [
+    Option<"reassociateFPReductions", "reassociate-fp-reductions",
+           "bool", /*default=*/"false",
+           "Allows llvm to reassociate floating-point reductions for speed">
+  ];
 }
 
 //===----------------------------------------------------------------------===//

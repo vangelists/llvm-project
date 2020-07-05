@@ -112,6 +112,9 @@ public:
   /// Gets the bitwidth of the index type when converted to LLVM.
   unsigned getIndexTypeBitwidth() { return options.indexBitwidth; }
 
+  /// Gets the pointer bitwidth.
+  unsigned getPointerBitwidth(unsigned addressSpace = 0);
+
 protected:
   /// LLVM IR module used to parse/create types.
   llvm::Module *module;
@@ -369,20 +372,26 @@ public:
   /// Returns the number of non-aggregate values that would be produced by
   /// `unpack`.
   static unsigned getNumUnpackedValues() { return 2; }
+
+  /// Builds IR computing the sizes in bytes (suitable for opaque allocation)
+  /// and appends the corresponding values into `sizes`.
+  static void computeSizes(OpBuilder &builder, Location loc,
+                           LLVMTypeConverter &typeConverter,
+                           ArrayRef<UnrankedMemRefDescriptor> values,
+                           SmallVectorImpl<Value> &sizes);
 };
 
-/// Base class for operation conversions targeting the LLVM IR dialect. Provides
-/// conversion patterns with access to an LLVMTypeConverter and the
-/// LowerToLLVMOptions.
+/// Base class for operation conversions targeting the LLVM IR dialect. It
+/// provides the conversion patterns with access to the LLVMTypeConverter and
+/// the LowerToLLVMOptions. The class captures the LLVMTypeConverter and the
+/// LowerToLLVMOptions by reference meaning the references have to remain alive
+/// during the entire pattern lifetime.
 class ConvertToLLVMPattern : public ConversionPattern {
 public:
   ConvertToLLVMPattern(StringRef rootOpName, MLIRContext *context,
                        LLVMTypeConverter &typeConverter,
-                       const LowerToLLVMOptions &options = {
-                           /*useBarePtrCallConv=*/false,
-                           /*emitCWrappers=*/false,
-                           /*indexBitwidth=*/kDeriveIndexBitwidthFromDataLayout,
-                           /*useAlignedAlloc=*/false},
+                       const LowerToLLVMOptions &options =
+                           LowerToLLVMOptions::getDefaultOptions(),
                        PatternBenefit benefit = 1);
 
   /// Returns the LLVM dialect.

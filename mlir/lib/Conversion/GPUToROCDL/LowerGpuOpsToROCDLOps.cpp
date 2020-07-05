@@ -53,7 +53,7 @@ struct LowerGpuOpsToROCDLOpsPass
 
     /// Customize the bitwidth used for the device side index computations.
     LowerToLLVMOptions options = {/*useBarePtrCallConv =*/false,
-                                  /*emitCWrappers = */ true,
+                                  /*emitCWrappers =*/true,
                                   /*indexBitwidth =*/indexBitwidth,
                                   /*useAlignedAlloc =*/false};
     LLVMTypeConverter converter(m.getContext(), options);

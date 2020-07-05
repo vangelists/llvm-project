@@ -259,6 +259,9 @@ def err_invalid_vector_float_decl_spec : Error<
 def err_invalid_vector_double_decl_spec : Error <
   "use of 'double' with '__vector' requires VSX support to be enabled "
   "(available on POWER7 or later)">;
+def err_invalid_vector_bool_int128_decl_spec : Error <
+  "use of '__int128' with '__vector bool' requires VSX support enabled (on "
+  "POWER10 or later)">;
 def err_invalid_vector_long_long_decl_spec : Error <
   "use of 'long long' with '__vector bool' requires VSX support (available on "
   "POWER7 or later) or extended Altivec support (available on POWER8 or later) "
@@ -827,8 +830,8 @@ def err_opencl_half_load_store : Error<
 def err_opencl_cast_to_half : Error<"casting to type %0 is not allowed">;
 def err_opencl_half_declaration : Error<
   "declaring variable of type %0 is not allowed">;
-def err_opencl_half_param : Error<
-  "declaring function parameter of type %0 is not allowed; did you forget * ?">;
+def err_opencl_invalid_param : Error<
+  "declaring function parameter of type %0 is not allowed%select{; did you forget * ?|}1">;
 def err_opencl_invalid_return : Error<
   "declaring function return value of type %0 is not allowed %select{; did you forget * ?|}1">;
 def warn_enum_value_overflow : Warning<"overflow in enumeration value">;
@@ -1411,7 +1414,8 @@ def warn_cxx14_compat_inline_variable : Warning<
   DefaultIgnore, InGroup<CXXPre17Compat>;
 
 def warn_inline_namespace_reopened_noninline : Warning<
-  "inline namespace reopened as a non-inline namespace">;
+  "inline namespace reopened as a non-inline namespace">,
+  InGroup<InlineNamespaceReopenedNoninline>;
 def err_inline_namespace_mismatch : Error<
   "non-inline namespace cannot be reopened as inline">;
 
@@ -10786,6 +10790,19 @@ def err_matrix_separate_incomplete_index: Error<
   "matrix row and column subscripts cannot be separated by any expression">;
 def err_matrix_subscript_comma: Error<
   "comma expressions are not allowed as indices in matrix subscript expressions">;
+def err_builtin_matrix_arg: Error<"1st argument must be a matrix">;
+def err_builtin_matrix_scalar_unsigned_arg: Error<
+  "%0 argument must be a constant unsigned integer expression">;
+def err_builtin_matrix_pointer_arg: Error<
+  "%ordinal0 argument must be a pointer to a valid matrix element type">;
+def err_builtin_matrix_pointer_arg_mismatch: Error<
+  "the pointee of the 2nd argument must match the element type of the 1st argument (%0 != %1)">;
+def err_builtin_matrix_store_to_const: Error<
+  "cannot store matrix to read-only pointer">;
+def err_builtin_matrix_stride_too_small: Error<
+  "stride must be greater or equal to the number of rows">;
+def err_builtin_matrix_invalid_dimension: Error<
+  "%0 dimension is outside the allowed range [1, %1]">;
 
 def warn_mismatched_import : Warning<
   "import %select{module|name}0 (%1) does not match the import %select{module|name}0 (%2) of the "
@@ -10794,26 +10811,6 @@ def warn_mismatched_import : Warning<
 def warn_import_on_definition : Warning<
   "import %select{module|name}0 cannot be applied to a function with a definition">,
   InGroup<IgnoredAttributes>;
-
-def err_builtin_matrix_arg: Error<"first argument must be a matrix">;
-
-def err_builtin_matrix_scalar_unsigned_arg: Error<
-  "%0 argument must be a constant unsigned integer expression">;
-
-def err_builtin_matrix_pointer_arg: Error<
-  "%0 argument must be a pointer to a valid matrix element type">;
-
-def err_builtin_matrix_pointer_arg_mismatch: Error<
-  "the pointee of the second argument must match the element type of the first argument (%0 != %1)">;
-
-def err_builtin_matrix_store_to_const: Error<
-  "cannot store matrix to read-only pointer">;
-
-def err_builtin_matrix_stride_too_small: Error<
-  "stride must be greater or equal to the number of rows">;
-
-def err_builtin_matrix_invalid_dimension: Error<
-  "%0 dimension is outside the allowed range [1, %1]">;
 
 def err_preserve_field_info_not_field : Error<
   "__builtin_preserve_field_info argument %0 not a field access">;

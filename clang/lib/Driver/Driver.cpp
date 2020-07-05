@@ -43,6 +43,7 @@
 #include "ToolChains/RISCVToolchain.h"
 #include "ToolChains/Solaris.h"
 #include "ToolChains/TCE.h"
+#include "ToolChains/VEToolchain.h"
 #include "ToolChains/WebAssembly.h"
 #include "ToolChains/XCore.h"
 #include "clang/Basic/Version.h"
@@ -1455,7 +1456,8 @@ void Driver::setUpResponseFiles(Compilation &C, Command &Cmd) {
   // capacity if the tool does not support response files, there is a chance/
   // that things will just work without a response file, so we silently just
   // skip it.
-  if (Cmd.getCreator().getResponseFilesSupport() == Tool::RF_None ||
+  if (Cmd.getResponseFileSupport().ResponseKind ==
+          ResponseFileSupport::RF_None ||
       llvm::sys::commandLineFitsWithinSystemLimits(Cmd.getExecutable(),
                                                    Cmd.getArguments()))
     return;
@@ -4765,13 +4767,11 @@ void Driver::generatePrefixedToolNames(
 }
 
 static bool ScanDirForExecutable(SmallString<128> &Dir,
-                                 ArrayRef<std::string> Names) {
-  for (const auto &Name : Names) {
-    llvm::sys::path::append(Dir, Name);
-    if (llvm::sys::fs::can_execute(Twine(Dir)))
-      return true;
-    llvm::sys::path::remove_filename(Dir);
-  }
+                                 const std::string &Name) {
+  llvm::sys::path::append(Dir, Name);
+  if (llvm::sys::fs::can_execute(Twine(Dir)))
+    return true;
+  llvm::sys::path::remove_filename(Dir);
   return false;
 }
 
@@ -4784,8 +4784,9 @@ std::string Driver::GetProgramPath(StringRef Name, const ToolChain &TC) const {
   for (const auto &PrefixDir : PrefixDirs) {
     if (llvm::sys::fs::is_directory(PrefixDir)) {
       SmallString<128> P(PrefixDir);
-      if (ScanDirForExecutable(P, TargetSpecificExecutables))
-        return std::string(P.str());
+      for (const auto &TargetSpecificExecutable : TargetSpecificExecutables)
+        if (ScanDirForExecutable(P, TargetSpecificExecutable))
+          return std::string(P.str());
     } else {
       SmallString<128> P((PrefixDir + Name).str());
       if (llvm::sys::fs::can_execute(Twine(P)))
@@ -4794,17 +4795,25 @@ std::string Driver::GetProgramPath(StringRef Name, const ToolChain &TC) const {
   }
 
   const ToolChain::path_list &List = TC.getProgramPaths();
-  for (const auto &Path : List) {
-    SmallString<128> P(Path);
-    if (ScanDirForExecutable(P, TargetSpecificExecutables))
-      return std::string(P.str());
-  }
+  for (const auto &TargetSpecificExecutable : TargetSpecificExecutables) {
+    // For each possible name of the tool look for it in
+    // program paths first, then the path.
+    // Higher priority names will be first, meaning that
+    // a higher priority name in the path will be found
+    // instead of a lower priority name in the program path.
+    // E.g. <triple>-gcc on the path will be found instead
+    // of gcc in the program path
+    for (const auto &Path : List) {
+      SmallString<128> P(Path);
+      if (ScanDirForExecutable(P, TargetSpecificExecutable))
+        return std::string(P.str());
+    }
 
-  // If all else failed, search the path.
-  for (const auto &TargetSpecificExecutable : TargetSpecificExecutables)
+    // Fall back to the path
     if (llvm::ErrorOr<std::string> P =
             llvm::sys::findProgramByName(TargetSpecificExecutable))
       return *P;
+  }
 
   return std::string(Name);
 }
@@ -4907,6 +4916,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
                Target.getArch() == llvm::Triple::ppc64le)
         TC = std::make_unique<toolchains::PPCLinuxToolChain>(*this, Target,
                                                               Args);
+      else if (Target.getArch() == llvm::Triple::ve)
+        TC = std::make_unique<toolchains::VEToolChain>(*this, Target, Args);
+
       else
         TC = std::make_unique<toolchains::Linux>(*this, Target, Args);
       break;
@@ -4998,6 +5010,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       case llvm::Triple::riscv32:
       case llvm::Triple::riscv64:
         TC = std::make_unique<toolchains::RISCVToolChain>(*this, Target, Args);
+        break;
+      case llvm::Triple::ve:
+        TC = std::make_unique<toolchains::VEToolChain>(*this, Target, Args);
         break;
       default:
         if (Target.getVendor() == llvm::Triple::Myriad)

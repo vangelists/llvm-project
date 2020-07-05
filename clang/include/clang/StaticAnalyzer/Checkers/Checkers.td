@@ -354,7 +354,14 @@ def StdCLibraryFunctionsChecker : Checker<"StdCLibraryFunctions">,
                   "If set to true, the checker displays the found summaries "
                   "for the given translation unit.",
                   "false",
-                  Released>
+                  Released,
+                  Hide>,
+    CmdLineOption<Boolean,
+                  "ModelPOSIX",
+                  "If set to true, the checker models functions from the "
+                  "POSIX standard.",
+                  "false",
+                  InAlpha>
   ]>,
   Documentation<NotDocumented>;
 
@@ -1368,6 +1375,12 @@ def AnalysisOrderChecker : Checker<"AnalysisOrder">,
                   Hide>,
     CmdLineOption<Boolean,
                   "PostStmtOffsetOfExpr",
+                  "",
+                  "false",
+                  Released,
+                  Hide>,
+    CmdLineOption<Boolean,
+                  "EvalCall",
                   "",
                   "false",
                   Released,

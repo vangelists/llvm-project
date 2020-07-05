@@ -3760,11 +3760,24 @@ int BoUpSLP::getSpillCost() const {
   SmallPtrSet<Instruction*, 4> LiveValues;
   Instruction *PrevInst = nullptr;
 
+  // The entries in VectorizableTree are not necessarily ordered by their
+  // position in basic blocks. Collect them and order them by dominance so later
+  // instructions are guaranteed to be visited first. For instructions in
+  // different basic blocks, we only scan to the beginning of the block, so
+  // their order does not matter, as long as all instructions in a basic block
+  // are grouped together. Using dominance ensures a deterministic order.
+  SmallVector<Instruction *, 16> OrderedScalars;
   for (const auto &TEPtr : VectorizableTree) {
     Instruction *Inst = dyn_cast<Instruction>(TEPtr->Scalars[0]);
     if (!Inst)
       continue;
+    OrderedScalars.push_back(Inst);
+  }
+  llvm::stable_sort(OrderedScalars, [this](Instruction *A, Instruction *B) {
+    return !DT->dominates(A, B);
+  });
 
+  for (Instruction *Inst : OrderedScalars) {
     if (!PrevInst) {
       PrevInst = Inst;
       continue;
@@ -7503,9 +7516,12 @@ bool SLPVectorizerPass::vectorizeGEPIndices(BasicBlock *BB, BoUpSLP &R) {
                       << Entry.second.size() << ".\n");
 
     // Process the GEP list in chunks suitable for the target's supported
-    // vector size. If a vector register can't hold 1 element, we are done.
+    // vector size. If a vector register can't hold 1 element, we are done. We
+    // are trying to vectorize the index computations, so the maximum number of
+    // elements is based on the size of the index expression, rather than the
+    // size of the GEP itself (the target's pointer size).
     unsigned MaxVecRegSize = R.getMaxVecRegSize();
-    unsigned EltSize = R.getVectorElementSize(Entry.second[0]);
+    unsigned EltSize = R.getVectorElementSize(*Entry.second[0]->idx_begin());
     if (MaxVecRegSize < EltSize)
       continue;
 
