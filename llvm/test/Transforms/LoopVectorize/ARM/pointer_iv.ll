@@ -107,25 +107,25 @@ define hidden void @pointer_phi_v4i32_add3(i32* noalias nocapture readonly %A, i
 ; CHECK-NEXT:    [[BROADCAST_SPLAT:%.*]] = shufflevector <4 x i32> [[BROADCAST_SPLATINSERT]], <4 x i32> undef, <4 x i32> zeroinitializer
 ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
 ; CHECK:       vector.body:
-; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i32* [ [[A]], [[ENTRY:%.*]] ], [ [[TMP0:%.*]], [[VECTOR_BODY]] ]
+; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i32* [ [[A]], [[ENTRY:%.*]] ], [ [[PTR_IND:%.*]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[INDEX:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP0]] = getelementptr i32, i32* [[POINTER_PHI]], i32 12
-; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
 ; CHECK-NEXT:    [[NEXT_GEP:%.*]] = getelementptr i32, i32* [[B]], i32 [[INDEX]]
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP1]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
-; CHECK-NEXT:    [[TMP2:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
-; CHECK-NEXT:    [[TMP3:%.*]] = bitcast i32* [[NEXT_GEP]] to <4 x i32>*
-; CHECK-NEXT:    store <4 x i32> [[TMP2]], <4 x i32>* [[TMP3]], align 4
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP0]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
+; CHECK-NEXT:    [[TMP1:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
+; CHECK-NEXT:    [[TMP2:%.*]] = bitcast i32* [[NEXT_GEP]] to <4 x i32>*
+; CHECK-NEXT:    store <4 x i32> [[TMP1]], <4 x i32>* [[TMP2]], align 4
 ; CHECK-NEXT:    [[INDEX_NEXT]] = add i32 [[INDEX]], 4
-; CHECK-NEXT:    [[TMP4:%.*]] = icmp eq i32 [[INDEX_NEXT]], 996
-; CHECK-NEXT:    br i1 [[TMP4]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !5
+; CHECK-NEXT:    [[TMP3:%.*]] = icmp eq i32 [[INDEX_NEXT]], 996
+; CHECK-NEXT:    [[PTR_IND]] = getelementptr i32, i32* [[POINTER_PHI]], i32 12
+; CHECK-NEXT:    br i1 [[TMP3]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !5
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[A_ADDR_09:%.*]] = phi i32* [ [[ADD_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[I_08:%.*]] = phi i32 [ [[INC:%.*]], [[FOR_BODY]] ], [ 996, [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[B_ADDR_07:%.*]] = phi i32* [ [[INCDEC_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END3]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP5:%.*]] = load i32, i32* [[A_ADDR_09]], align 4
+; CHECK-NEXT:    [[TMP4:%.*]] = load i32, i32* [[A_ADDR_09]], align 4
 ; CHECK-NEXT:    [[ADD_PTR]] = getelementptr inbounds i32, i32* [[A_ADDR_09]], i32 3
-; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP5]], [[Y]]
+; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP4]], [[Y]]
 ; CHECK-NEXT:    store i32 [[ADD]], i32* [[B_ADDR_07]], align 4
 ; CHECK-NEXT:    [[INCDEC_PTR]] = getelementptr inbounds i32, i32* [[B_ADDR_07]], i32 1
 ; CHECK-NEXT:    [[INC]] = add nuw nsw i32 [[I_08]], 1
@@ -546,25 +546,25 @@ define hidden void @pointer_phi_v4f32_add3(float* noalias nocapture readonly %A,
 ; CHECK-NEXT:    [[BROADCAST_SPLAT:%.*]] = shufflevector <4 x float> [[BROADCAST_SPLATINSERT]], <4 x float> undef, <4 x i32> zeroinitializer
 ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
 ; CHECK:       vector.body:
-; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi float* [ [[A]], [[ENTRY:%.*]] ], [ [[TMP0:%.*]], [[VECTOR_BODY]] ]
+; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi float* [ [[A]], [[ENTRY:%.*]] ], [ [[PTR_IND:%.*]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[INDEX:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP0]] = getelementptr float, float* [[POINTER_PHI]], i32 12
-; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr float, float* [[POINTER_PHI]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr float, float* [[POINTER_PHI]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
 ; CHECK-NEXT:    [[NEXT_GEP:%.*]] = getelementptr float, float* [[B]], i32 [[INDEX]]
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x float> @llvm.masked.gather.v4f32.v4p0f32(<4 x float*> [[TMP1]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x float> undef)
-; CHECK-NEXT:    [[TMP2:%.*]] = fadd fast <4 x float> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
-; CHECK-NEXT:    [[TMP3:%.*]] = bitcast float* [[NEXT_GEP]] to <4 x float>*
-; CHECK-NEXT:    store <4 x float> [[TMP2]], <4 x float>* [[TMP3]], align 4
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x float> @llvm.masked.gather.v4f32.v4p0f32(<4 x float*> [[TMP0]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x float> undef)
+; CHECK-NEXT:    [[TMP1:%.*]] = fadd fast <4 x float> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
+; CHECK-NEXT:    [[TMP2:%.*]] = bitcast float* [[NEXT_GEP]] to <4 x float>*
+; CHECK-NEXT:    store <4 x float> [[TMP1]], <4 x float>* [[TMP2]], align 4
 ; CHECK-NEXT:    [[INDEX_NEXT]] = add i32 [[INDEX]], 4
-; CHECK-NEXT:    [[TMP4:%.*]] = icmp eq i32 [[INDEX_NEXT]], 996
-; CHECK-NEXT:    br i1 [[TMP4]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !17
+; CHECK-NEXT:    [[TMP3:%.*]] = icmp eq i32 [[INDEX_NEXT]], 996
+; CHECK-NEXT:    [[PTR_IND]] = getelementptr float, float* [[POINTER_PHI]], i32 12
+; CHECK-NEXT:    br i1 [[TMP3]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !17
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[A_ADDR_09:%.*]] = phi float* [ [[ADD_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[I_08:%.*]] = phi i32 [ [[INC:%.*]], [[FOR_BODY]] ], [ 996, [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[B_ADDR_07:%.*]] = phi float* [ [[INCDEC_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END3]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP5:%.*]] = load float, float* [[A_ADDR_09]], align 4
+; CHECK-NEXT:    [[TMP4:%.*]] = load float, float* [[A_ADDR_09]], align 4
 ; CHECK-NEXT:    [[ADD_PTR]] = getelementptr inbounds float, float* [[A_ADDR_09]], i32 3
-; CHECK-NEXT:    [[ADD:%.*]] = fadd fast float [[TMP5]], [[Y]]
+; CHECK-NEXT:    [[ADD:%.*]] = fadd fast float [[TMP4]], [[Y]]
 ; CHECK-NEXT:    store float [[ADD]], float* [[B_ADDR_07]], align 4
 ; CHECK-NEXT:    [[INCDEC_PTR]] = getelementptr inbounds float, float* [[B_ADDR_07]], i32 1
 ; CHECK-NEXT:    [[INC]] = add nuw nsw i32 [[I_08]], 1
@@ -736,33 +736,33 @@ define hidden void @pointer_phi_v4i32_uf2(i32* noalias nocapture readonly %A, i3
 ; CHECK-NEXT:    [[BROADCAST_SPLAT7:%.*]] = shufflevector <4 x i32> [[BROADCAST_SPLATINSERT6]], <4 x i32> undef, <4 x i32> zeroinitializer
 ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
 ; CHECK:       vector.body:
-; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i32* [ [[A]], [[ENTRY:%.*]] ], [ [[TMP0:%.*]], [[VECTOR_BODY]] ]
+; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i32* [ [[A]], [[ENTRY:%.*]] ], [ [[PTR_IND:%.*]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[INDEX:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP0]] = getelementptr i32, i32* [[POINTER_PHI]], i32 48
-; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 0, i32 6, i32 12, i32 18>
-; CHECK-NEXT:    [[TMP2:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 24, i32 30, i32 36, i32 42>
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 0, i32 6, i32 12, i32 18>
+; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 24, i32 30, i32 36, i32 42>
 ; CHECK-NEXT:    [[NEXT_GEP:%.*]] = getelementptr i32, i32* [[B]], i32 [[INDEX]]
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP1]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER5:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP2]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
-; CHECK-NEXT:    [[TMP3:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
-; CHECK-NEXT:    [[TMP4:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER5]], [[BROADCAST_SPLAT7]]
-; CHECK-NEXT:    [[TMP5:%.*]] = bitcast i32* [[NEXT_GEP]] to <4 x i32>*
-; CHECK-NEXT:    store <4 x i32> [[TMP3]], <4 x i32>* [[TMP5]], align 4
-; CHECK-NEXT:    [[TMP6:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 4
-; CHECK-NEXT:    [[TMP7:%.*]] = bitcast i32* [[TMP6]] to <4 x i32>*
-; CHECK-NEXT:    store <4 x i32> [[TMP4]], <4 x i32>* [[TMP7]], align 4
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP0]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER5:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP1]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
+; CHECK-NEXT:    [[TMP2:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
+; CHECK-NEXT:    [[TMP3:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER5]], [[BROADCAST_SPLAT7]]
+; CHECK-NEXT:    [[TMP4:%.*]] = bitcast i32* [[NEXT_GEP]] to <4 x i32>*
+; CHECK-NEXT:    store <4 x i32> [[TMP2]], <4 x i32>* [[TMP4]], align 4
+; CHECK-NEXT:    [[TMP5:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 4
+; CHECK-NEXT:    [[TMP6:%.*]] = bitcast i32* [[TMP5]] to <4 x i32>*
+; CHECK-NEXT:    store <4 x i32> [[TMP3]], <4 x i32>* [[TMP6]], align 4
 ; CHECK-NEXT:    [[INDEX_NEXT]] = add i32 [[INDEX]], 8
-; CHECK-NEXT:    [[TMP8:%.*]] = icmp eq i32 [[INDEX_NEXT]], 9992
-; CHECK-NEXT:    br i1 [[TMP8]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !22
+; CHECK-NEXT:    [[TMP7:%.*]] = icmp eq i32 [[INDEX_NEXT]], 9992
+; CHECK-NEXT:    [[PTR_IND]] = getelementptr i32, i32* [[POINTER_PHI]], i32 48
+; CHECK-NEXT:    br i1 [[TMP7]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !22
 ; CHECK:       for.cond.cleanup:
 ; CHECK-NEXT:    ret void
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[A_ADDR_08:%.*]] = phi i32* [ [[ADD_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[I_07:%.*]] = phi i32 [ [[INC:%.*]], [[FOR_BODY]] ], [ 9992, [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[B_ADDR_06:%.*]] = phi i32* [ [[INCDEC_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END3]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP9:%.*]] = load i32, i32* [[A_ADDR_08]], align 4
+; CHECK-NEXT:    [[TMP8:%.*]] = load i32, i32* [[A_ADDR_08]], align 4
 ; CHECK-NEXT:    [[ADD_PTR]] = getelementptr inbounds i32, i32* [[A_ADDR_08]], i32 6
-; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP9]], [[Y]]
+; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP8]], [[Y]]
 ; CHECK-NEXT:    store i32 [[ADD]], i32* [[B_ADDR_06]], align 4
 ; CHECK-NEXT:    [[INCDEC_PTR]] = getelementptr inbounds i32, i32* [[B_ADDR_06]], i32 1
 ; CHECK-NEXT:    [[INC]] = add nuw nsw i32 [[I_07]], 1
@@ -808,45 +808,45 @@ define hidden void @pointer_phi_v4i32_uf4(i32* noalias nocapture readonly %A, i3
 ; CHECK-NEXT:    [[BROADCAST_SPLAT15:%.*]] = shufflevector <4 x i32> [[BROADCAST_SPLATINSERT14]], <4 x i32> undef, <4 x i32> zeroinitializer
 ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
 ; CHECK:       vector.body:
-; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i32* [ [[A]], [[ENTRY:%.*]] ], [ [[TMP0:%.*]], [[VECTOR_BODY]] ]
+; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i32* [ [[A]], [[ENTRY:%.*]] ], [ [[PTR_IND:%.*]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[INDEX:%.*]] = phi i32 [ 0, [[ENTRY]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP0]] = getelementptr i32, i32* [[POINTER_PHI]], i32 96
-; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 0, i32 6, i32 12, i32 18>
-; CHECK-NEXT:    [[TMP2:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 24, i32 30, i32 36, i32 42>
-; CHECK-NEXT:    [[TMP3:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 48, i32 54, i32 60, i32 66>
-; CHECK-NEXT:    [[TMP4:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 72, i32 78, i32 84, i32 90>
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 0, i32 6, i32 12, i32 18>
+; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 24, i32 30, i32 36, i32 42>
+; CHECK-NEXT:    [[TMP2:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 48, i32 54, i32 60, i32 66>
+; CHECK-NEXT:    [[TMP3:%.*]] = getelementptr i32, i32* [[POINTER_PHI]], <4 x i32> <i32 72, i32 78, i32 84, i32 90>
 ; CHECK-NEXT:    [[NEXT_GEP:%.*]] = getelementptr i32, i32* [[B]], i32 [[INDEX]]
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP1]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER7:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP2]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER8:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP3]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER9:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP4]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
-; CHECK-NEXT:    [[TMP5:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
-; CHECK-NEXT:    [[TMP6:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER7]], [[BROADCAST_SPLAT11]]
-; CHECK-NEXT:    [[TMP7:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER8]], [[BROADCAST_SPLAT13]]
-; CHECK-NEXT:    [[TMP8:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER9]], [[BROADCAST_SPLAT15]]
-; CHECK-NEXT:    [[TMP9:%.*]] = bitcast i32* [[NEXT_GEP]] to <4 x i32>*
-; CHECK-NEXT:    store <4 x i32> [[TMP5]], <4 x i32>* [[TMP9]], align 4
-; CHECK-NEXT:    [[TMP10:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 4
-; CHECK-NEXT:    [[TMP11:%.*]] = bitcast i32* [[TMP10]] to <4 x i32>*
-; CHECK-NEXT:    store <4 x i32> [[TMP6]], <4 x i32>* [[TMP11]], align 4
-; CHECK-NEXT:    [[TMP12:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 8
-; CHECK-NEXT:    [[TMP13:%.*]] = bitcast i32* [[TMP12]] to <4 x i32>*
-; CHECK-NEXT:    store <4 x i32> [[TMP7]], <4 x i32>* [[TMP13]], align 4
-; CHECK-NEXT:    [[TMP14:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 12
-; CHECK-NEXT:    [[TMP15:%.*]] = bitcast i32* [[TMP14]] to <4 x i32>*
-; CHECK-NEXT:    store <4 x i32> [[TMP8]], <4 x i32>* [[TMP15]], align 4
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP0]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER7:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP1]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER8:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP2]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER9:%.*]] = call <4 x i32> @llvm.masked.gather.v4i32.v4p0i32(<4 x i32*> [[TMP3]], i32 4, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i32> undef)
+; CHECK-NEXT:    [[TMP4:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER]], [[BROADCAST_SPLAT]]
+; CHECK-NEXT:    [[TMP5:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER7]], [[BROADCAST_SPLAT11]]
+; CHECK-NEXT:    [[TMP6:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER8]], [[BROADCAST_SPLAT13]]
+; CHECK-NEXT:    [[TMP7:%.*]] = add nsw <4 x i32> [[WIDE_MASKED_GATHER9]], [[BROADCAST_SPLAT15]]
+; CHECK-NEXT:    [[TMP8:%.*]] = bitcast i32* [[NEXT_GEP]] to <4 x i32>*
+; CHECK-NEXT:    store <4 x i32> [[TMP4]], <4 x i32>* [[TMP8]], align 4
+; CHECK-NEXT:    [[TMP9:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 4
+; CHECK-NEXT:    [[TMP10:%.*]] = bitcast i32* [[TMP9]] to <4 x i32>*
+; CHECK-NEXT:    store <4 x i32> [[TMP5]], <4 x i32>* [[TMP10]], align 4
+; CHECK-NEXT:    [[TMP11:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 8
+; CHECK-NEXT:    [[TMP12:%.*]] = bitcast i32* [[TMP11]] to <4 x i32>*
+; CHECK-NEXT:    store <4 x i32> [[TMP6]], <4 x i32>* [[TMP12]], align 4
+; CHECK-NEXT:    [[TMP13:%.*]] = getelementptr i32, i32* [[NEXT_GEP]], i32 12
+; CHECK-NEXT:    [[TMP14:%.*]] = bitcast i32* [[TMP13]] to <4 x i32>*
+; CHECK-NEXT:    store <4 x i32> [[TMP7]], <4 x i32>* [[TMP14]], align 4
 ; CHECK-NEXT:    [[INDEX_NEXT]] = add i32 [[INDEX]], 16
-; CHECK-NEXT:    [[TMP16:%.*]] = icmp eq i32 [[INDEX_NEXT]], 9984
-; CHECK-NEXT:    br i1 [[TMP16]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !24
+; CHECK-NEXT:    [[TMP15:%.*]] = icmp eq i32 [[INDEX_NEXT]], 9984
+; CHECK-NEXT:    [[PTR_IND]] = getelementptr i32, i32* [[POINTER_PHI]], i32 96
+; CHECK-NEXT:    br i1 [[TMP15]], label [[FOR_BODY:%.*]], label [[VECTOR_BODY]], !llvm.loop !24
 ; CHECK:       for.cond.cleanup:
 ; CHECK-NEXT:    ret void
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[A_ADDR_08:%.*]] = phi i32* [ [[ADD_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[I_07:%.*]] = phi i32 [ [[INC:%.*]], [[FOR_BODY]] ], [ 9984, [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[B_ADDR_06:%.*]] = phi i32* [ [[INCDEC_PTR:%.*]], [[FOR_BODY]] ], [ [[IND_END3]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP17:%.*]] = load i32, i32* [[A_ADDR_08]], align 4
+; CHECK-NEXT:    [[TMP16:%.*]] = load i32, i32* [[A_ADDR_08]], align 4
 ; CHECK-NEXT:    [[ADD_PTR]] = getelementptr inbounds i32, i32* [[A_ADDR_08]], i32 6
-; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP17]], [[Y]]
+; CHECK-NEXT:    [[ADD:%.*]] = add nsw i32 [[TMP16]], [[Y]]
 ; CHECK-NEXT:    store i32 [[ADD]], i32* [[B_ADDR_06]], align 4
 ; CHECK-NEXT:    [[INCDEC_PTR]] = getelementptr inbounds i32, i32* [[B_ADDR_06]], i32 1
 ; CHECK-NEXT:    [[INC]] = add nuw nsw i32 [[I_07]], 1
@@ -887,42 +887,42 @@ define hidden void @mult_ptr_iv(i8* noalias nocapture readonly %x, i8* noalias n
 ; CHECK-NEXT:    [[IND_END3:%.*]] = getelementptr i8, i8* [[Z]], i32 3000
 ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
 ; CHECK:       vector.body:
-; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i8* [ [[X]], [[VECTOR_PH]] ], [ [[TMP0:%.*]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[POINTER_PHI5:%.*]] = phi i8* [ [[Z]], [[VECTOR_PH]] ], [ [[TMP2:%.*]], [[VECTOR_BODY]] ]
+; CHECK-NEXT:    [[POINTER_PHI:%.*]] = phi i8* [ [[X]], [[VECTOR_PH]] ], [ [[PTR_IND:%.*]], [[VECTOR_BODY]] ]
+; CHECK-NEXT:    [[POINTER_PHI5:%.*]] = phi i8* [ [[Z]], [[VECTOR_PH]] ], [ [[PTR_IND6:%.*]], [[VECTOR_BODY]] ]
 ; CHECK-NEXT:    [[INDEX:%.*]] = phi i32 [ 0, [[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
-; CHECK-NEXT:    [[TMP0]] = getelementptr i8, i8* [[POINTER_PHI]], i32 12
-; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr i8, i8* [[POINTER_PHI]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
-; CHECK-NEXT:    [[TMP2]] = getelementptr i8, i8* [[POINTER_PHI5]], i32 12
-; CHECK-NEXT:    [[TMP3:%.*]] = getelementptr i8, i8* [[POINTER_PHI5]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
-; CHECK-NEXT:    [[TMP4:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP1]], i32 1
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i8> @llvm.masked.gather.v4i8.v4p0i8(<4 x i8*> [[TMP1]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i8> undef), !alias.scope !26
-; CHECK-NEXT:    [[TMP5:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP1]], i32 2
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER6:%.*]] = call <4 x i8> @llvm.masked.gather.v4i8.v4p0i8(<4 x i8*> [[TMP4]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i8> undef), !alias.scope !26
-; CHECK-NEXT:    [[WIDE_MASKED_GATHER7:%.*]] = call <4 x i8> @llvm.masked.gather.v4i8.v4p0i8(<4 x i8*> [[TMP5]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i8> undef), !alias.scope !26
-; CHECK-NEXT:    [[TMP6:%.*]] = mul <4 x i8> [[WIDE_MASKED_GATHER]], <i8 10, i8 10, i8 10, i8 10>
-; CHECK-NEXT:    [[TMP7:%.*]] = mul <4 x i8> [[WIDE_MASKED_GATHER]], [[WIDE_MASKED_GATHER6]]
-; CHECK-NEXT:    [[TMP8:%.*]] = mul <4 x i8> [[WIDE_MASKED_GATHER]], [[WIDE_MASKED_GATHER7]]
-; CHECK-NEXT:    [[TMP9:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP3]], i32 1
-; CHECK-NEXT:    call void @llvm.masked.scatter.v4i8.v4p0i8(<4 x i8> [[TMP6]], <4 x i8*> [[TMP3]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>), !alias.scope !29, !noalias !26
-; CHECK-NEXT:    [[TMP10:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP3]], i32 2
-; CHECK-NEXT:    call void @llvm.masked.scatter.v4i8.v4p0i8(<4 x i8> [[TMP7]], <4 x i8*> [[TMP9]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>), !alias.scope !29, !noalias !26
-; CHECK-NEXT:    call void @llvm.masked.scatter.v4i8.v4p0i8(<4 x i8> [[TMP8]], <4 x i8*> [[TMP10]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>), !alias.scope !29, !noalias !26
+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr i8, i8* [[POINTER_PHI]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
+; CHECK-NEXT:    [[TMP1:%.*]] = getelementptr i8, i8* [[POINTER_PHI5]], <4 x i32> <i32 0, i32 3, i32 6, i32 9>
+; CHECK-NEXT:    [[TMP2:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP0]], i32 1
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER:%.*]] = call <4 x i8> @llvm.masked.gather.v4i8.v4p0i8(<4 x i8*> [[TMP0]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i8> undef), !alias.scope !26
+; CHECK-NEXT:    [[TMP3:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP0]], i32 2
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER7:%.*]] = call <4 x i8> @llvm.masked.gather.v4i8.v4p0i8(<4 x i8*> [[TMP2]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i8> undef), !alias.scope !26
+; CHECK-NEXT:    [[WIDE_MASKED_GATHER8:%.*]] = call <4 x i8> @llvm.masked.gather.v4i8.v4p0i8(<4 x i8*> [[TMP3]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x i8> undef), !alias.scope !26
+; CHECK-NEXT:    [[TMP4:%.*]] = mul <4 x i8> [[WIDE_MASKED_GATHER]], <i8 10, i8 10, i8 10, i8 10>
+; CHECK-NEXT:    [[TMP5:%.*]] = mul <4 x i8> [[WIDE_MASKED_GATHER]], [[WIDE_MASKED_GATHER7]]
+; CHECK-NEXT:    [[TMP6:%.*]] = mul <4 x i8> [[WIDE_MASKED_GATHER]], [[WIDE_MASKED_GATHER8]]
+; CHECK-NEXT:    [[TMP7:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP1]], i32 1
+; CHECK-NEXT:    call void @llvm.masked.scatter.v4i8.v4p0i8(<4 x i8> [[TMP4]], <4 x i8*> [[TMP1]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>), !alias.scope !29, !noalias !26
+; CHECK-NEXT:    [[TMP8:%.*]] = getelementptr inbounds i8, <4 x i8*> [[TMP1]], i32 2
+; CHECK-NEXT:    call void @llvm.masked.scatter.v4i8.v4p0i8(<4 x i8> [[TMP5]], <4 x i8*> [[TMP7]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>), !alias.scope !29, !noalias !26
+; CHECK-NEXT:    call void @llvm.masked.scatter.v4i8.v4p0i8(<4 x i8> [[TMP6]], <4 x i8*> [[TMP8]], i32 1, <4 x i1> <i1 true, i1 true, i1 true, i1 true>), !alias.scope !29, !noalias !26
 ; CHECK-NEXT:    [[INDEX_NEXT]] = add i32 [[INDEX]], 4
-; CHECK-NEXT:    [[TMP11:%.*]] = icmp eq i32 [[INDEX_NEXT]], 1000
-; CHECK-NEXT:    br i1 [[TMP11]], label [[END:%.*]], label [[VECTOR_BODY]], !llvm.loop !31
+; CHECK-NEXT:    [[TMP9:%.*]] = icmp eq i32 [[INDEX_NEXT]], 1000
+; CHECK-NEXT:    [[PTR_IND]] = getelementptr i8, i8* [[POINTER_PHI]], i32 12
+; CHECK-NEXT:    [[PTR_IND6]] = getelementptr i8, i8* [[POINTER_PHI5]], i32 12
+; CHECK-NEXT:    br i1 [[TMP9]], label [[END:%.*]], label [[VECTOR_BODY]], !llvm.loop !31
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[X_ADDR_050:%.*]] = phi i8* [ [[INCDEC_PTR2:%.*]], [[FOR_BODY]] ], [ [[X]], [[ENTRY:%.*]] ]
 ; CHECK-NEXT:    [[Z_ADDR_049:%.*]] = phi i8* [ [[INCDEC_PTR34:%.*]], [[FOR_BODY]] ], [ [[Z]], [[ENTRY]] ]
 ; CHECK-NEXT:    [[I_048:%.*]] = phi i32 [ [[INC:%.*]], [[FOR_BODY]] ], [ 0, [[ENTRY]] ]
 ; CHECK-NEXT:    [[INCDEC_PTR:%.*]] = getelementptr inbounds i8, i8* [[X_ADDR_050]], i32 1
-; CHECK-NEXT:    [[TMP12:%.*]] = load i8, i8* [[X_ADDR_050]], align 1
+; CHECK-NEXT:    [[TMP10:%.*]] = load i8, i8* [[X_ADDR_050]], align 1
 ; CHECK-NEXT:    [[INCDEC_PTR1:%.*]] = getelementptr inbounds i8, i8* [[X_ADDR_050]], i32 2
-; CHECK-NEXT:    [[TMP13:%.*]] = load i8, i8* [[INCDEC_PTR]], align 1
+; CHECK-NEXT:    [[TMP11:%.*]] = load i8, i8* [[INCDEC_PTR]], align 1
 ; CHECK-NEXT:    [[INCDEC_PTR2]] = getelementptr inbounds i8, i8* [[X_ADDR_050]], i32 3
-; CHECK-NEXT:    [[TMP14:%.*]] = load i8, i8* [[INCDEC_PTR1]], align 1
-; CHECK-NEXT:    [[MUL:%.*]] = mul i8 [[TMP12]], 10
-; CHECK-NEXT:    [[MUL1:%.*]] = mul i8 [[TMP12]], [[TMP13]]
-; CHECK-NEXT:    [[MUL2:%.*]] = mul i8 [[TMP12]], [[TMP14]]
+; CHECK-NEXT:    [[TMP12:%.*]] = load i8, i8* [[INCDEC_PTR1]], align 1
+; CHECK-NEXT:    [[MUL:%.*]] = mul i8 [[TMP10]], 10
+; CHECK-NEXT:    [[MUL1:%.*]] = mul i8 [[TMP10]], [[TMP11]]
+; CHECK-NEXT:    [[MUL2:%.*]] = mul i8 [[TMP10]], [[TMP12]]
 ; CHECK-NEXT:    [[INCDEC_PTR32:%.*]] = getelementptr inbounds i8, i8* [[Z_ADDR_049]], i32 1
 ; CHECK-NEXT:    store i8 [[MUL]], i8* [[Z_ADDR_049]], align 1
 ; CHECK-NEXT:    [[INCDEC_PTR33:%.*]] = getelementptr inbounds i8, i8* [[Z_ADDR_049]], i32 2

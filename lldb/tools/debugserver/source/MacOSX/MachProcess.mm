@@ -614,10 +614,31 @@ MachProcess::GetDeploymentInfo(const struct load_command &lc,
                    &vers_cmd) != sizeof(struct version_min_command))
       return;
     info.platform = platform;
-    info.major_version = vers_cmd.sdk >> 16;
-    info.minor_version = (vers_cmd.sdk >> 8) & 0xffu;
-    info.patch_version = vers_cmd.sdk & 0xffu;
-    info.maybe_simulator = true;
+    info.major_version = vers_cmd.version >> 16;
+    info.minor_version = (vers_cmd.version >> 8) & 0xffu;
+    info.patch_version = vers_cmd.version & 0xffu;
+
+    // Disambiguate legacy simulator platforms.
+#if (defined(__x86_64__) || defined(__i386__))
+    // If we are running on Intel macOS, it is safe to assume this is
+    // really a back-deploying simulator binary.
+    switch (info.platform) {
+    case PLATFORM_IOS:
+      info.platform = PLATFORM_IOSSIMULATOR;
+      break;
+    case PLATFORM_TVOS:
+      info.platform = PLATFORM_TVOSSIMULATOR;
+      break;
+    case PLATFORM_WATCHOS:
+      info.platform = PLATFORM_WATCHOSSIMULATOR;
+      break;
+    }
+#else
+    // On an Apple Silicon macOS host, there is no ambiguity. The only
+    // binaries that use legacy load commands are back-deploying
+    // native iOS binaries. All simulator binaries use the newer,
+    // unambiguous LC_BUILD_VERSION load commands.
+#endif
   };
   switch (cmd) {
   case LC_VERSION_MIN_IPHONEOS:
@@ -639,9 +660,9 @@ MachProcess::GetDeploymentInfo(const struct load_command &lc,
                    &build_vers) != sizeof(struct build_version_command))
       break;
     info.platform = build_vers.platform;
-    info.major_version = build_vers.sdk >> 16;
-    info.minor_version = (build_vers.sdk >> 8) & 0xffu;
-    info.patch_version = build_vers.sdk & 0xffu;
+    info.major_version = build_vers.minos >> 16;
+    info.minor_version = (build_vers.minos >> 8) & 0xffu;
+    info.patch_version = build_vers.minos & 0xffu;
     break;
   }
 #endif
@@ -778,34 +799,6 @@ bool MachProcess::GetMachOInformationFromMemory(
         uuid_copy(inf.uuid, uuidcmd.uuid);
     }
     if (DeploymentInfo deployment_info = GetDeploymentInfo(lc, load_cmds_p)) {
-      // Simulator support. If the platform is ambiguous, use the dyld info.
-      if (deployment_info.maybe_simulator) {
-        // If dyld doesn't return a platform, use a heuristic.
-#if (defined(__x86_64__) || defined(__i386__))
-        // If we are running on Intel macOS, it is safe to assume
-        // this is really a back-deploying simulator binary.
-        if (deployment_info.maybe_simulator) {
-          switch (deployment_info.platform) {
-          case PLATFORM_IOS:
-            deployment_info.platform = PLATFORM_IOSSIMULATOR;
-            break;
-          case PLATFORM_TVOS:
-            deployment_info.platform = PLATFORM_TVOSSIMULATOR;
-            break;
-          case PLATFORM_WATCHOS:
-            deployment_info.platform = PLATFORM_WATCHOSSIMULATOR;
-            break;
-          }
-#else
-        // On an Apple Silicon macOS host, there is no
-        // ambiguity. The only binaries that use legacy load
-        // commands are back-deploying native iOS binaries. All
-        // simulator binaries use the newer, unambiguous
-        // LC_BUILD_VERSION load commands.
-        deployment_info.maybe_simulator = false;
-#endif
-        }
-      }
       const char *lc_platform = GetPlatformString(deployment_info.platform);
       // macCatalyst support.
       //

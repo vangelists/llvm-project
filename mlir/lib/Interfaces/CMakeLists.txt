@@ -6,6 +6,7 @@ set(LLVM_OPTIONAL_SOURCES
   InferTypeOpInterface.cpp
   LoopLikeInterface.cpp
   SideEffectInterfaces.cpp
+  VectorInterfaces.cpp
   ViewLikeInterface.cpp
   )
 
@@ -32,5 +33,6 @@ add_mlir_interface_library(DerivedAttributeOpInterface)
 add_mlir_interface_library(InferTypeOpInterface)
 add_mlir_interface_library(LoopLikeInterface)
 add_mlir_interface_library(SideEffectInterfaces)
+add_mlir_interface_library(VectorInterfaces)
 add_mlir_interface_library(ViewLikeInterface)
 

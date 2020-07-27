@@ -1059,7 +1059,7 @@ bool IRTranslator::translateGetElementPtr(const User &U,
   // splat vector.
   unsigned VectorWidth = 0;
   if (auto *VT = dyn_cast<VectorType>(U.getType()))
-    VectorWidth = VT->getNumElements();
+    VectorWidth = cast<FixedVectorType>(VT)->getNumElements();
 
   // We might need to splat the base pointer into a vector if the offsets
   // are vectors.
@@ -1214,6 +1214,16 @@ bool IRTranslator::translateOverflowIntrinsic(const CallInst &CI, unsigned Op,
   return true;
 }
 
+bool IRTranslator::translateFixedPointIntrinsic(unsigned Op, const CallInst &CI,
+                                                MachineIRBuilder &MIRBuilder) {
+  Register Dst = getOrCreateVReg(CI);
+  Register Src0 = getOrCreateVReg(*CI.getOperand(0));
+  Register Src1 = getOrCreateVReg(*CI.getOperand(1));
+  uint64_t Scale = cast<ConstantInt>(CI.getOperand(2))->getZExtValue();
+  MIRBuilder.buildInstr(Op, {Dst}, { Src0, Src1, Scale });
+  return true;
+}
+
 unsigned IRTranslator::getSimpleIntrinsicOpcode(Intrinsic::ID ID) {
   switch (ID) {
     default:
@@ -1264,6 +1274,8 @@ unsigned IRTranslator::getSimpleIntrinsicOpcode(Intrinsic::ID ID) {
       return TargetOpcode::G_FNEARBYINT;
     case Intrinsic::pow:
       return TargetOpcode::G_FPOW;
+    case Intrinsic::powi:
+      return TargetOpcode::G_FPOWI;
     case Intrinsic::rint:
       return TargetOpcode::G_FRINT;
     case Intrinsic::round:
@@ -1484,6 +1496,30 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
     return translateBinaryOp(TargetOpcode::G_USUBSAT, CI, MIRBuilder);
   case Intrinsic::ssub_sat:
     return translateBinaryOp(TargetOpcode::G_SSUBSAT, CI, MIRBuilder);
+  case Intrinsic::umin:
+    return translateBinaryOp(TargetOpcode::G_UMIN, CI, MIRBuilder);
+  case Intrinsic::umax:
+    return translateBinaryOp(TargetOpcode::G_UMAX, CI, MIRBuilder);
+  case Intrinsic::smin:
+    return translateBinaryOp(TargetOpcode::G_SMIN, CI, MIRBuilder);
+  case Intrinsic::smax:
+    return translateBinaryOp(TargetOpcode::G_SMAX, CI, MIRBuilder);
+  case Intrinsic::smul_fix:
+    return translateFixedPointIntrinsic(TargetOpcode::G_SMULFIX, CI, MIRBuilder);
+  case Intrinsic::umul_fix:
+    return translateFixedPointIntrinsic(TargetOpcode::G_UMULFIX, CI, MIRBuilder);
+  case Intrinsic::smul_fix_sat:
+    return translateFixedPointIntrinsic(TargetOpcode::G_SMULFIXSAT, CI, MIRBuilder);
+  case Intrinsic::umul_fix_sat:
+    return translateFixedPointIntrinsic(TargetOpcode::G_UMULFIXSAT, CI, MIRBuilder);
+  case Intrinsic::sdiv_fix:
+    return translateFixedPointIntrinsic(TargetOpcode::G_SDIVFIX, CI, MIRBuilder);
+  case Intrinsic::udiv_fix:
+    return translateFixedPointIntrinsic(TargetOpcode::G_UDIVFIX, CI, MIRBuilder);
+  case Intrinsic::sdiv_fix_sat:
+    return translateFixedPointIntrinsic(TargetOpcode::G_SDIVFIXSAT, CI, MIRBuilder);
+  case Intrinsic::udiv_fix_sat:
+    return translateFixedPointIntrinsic(TargetOpcode::G_UDIVFIXSAT, CI, MIRBuilder);
   case Intrinsic::fmuladd: {
     const TargetMachine &TM = MF->getTarget();
     const TargetLowering &TLI = *MF->getSubtarget().getTargetLowering();
@@ -1598,6 +1634,7 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
   case Intrinsic::sideeffect:
     // Discard annotate attributes, assumptions, and artificial side-effects.
     return true;
+  case Intrinsic::read_volatile_register:
   case Intrinsic::read_register: {
     Value *Arg = CI.getArgOperand(0);
     MIRBuilder
@@ -1946,7 +1983,7 @@ bool IRTranslator::translateInsertElement(const User &U,
                                           MachineIRBuilder &MIRBuilder) {
   // If it is a <1 x Ty> vector, use the scalar as it is
   // not a legal vector type in LLT.
-  if (cast<VectorType>(U.getType())->getNumElements() == 1)
+  if (cast<FixedVectorType>(U.getType())->getNumElements() == 1)
     return translateCopy(U, *U.getOperand(1), MIRBuilder);
 
   Register Res = getOrCreateVReg(U);
@@ -1961,7 +1998,7 @@ bool IRTranslator::translateExtractElement(const User &U,
                                            MachineIRBuilder &MIRBuilder) {
   // If it is a <1 x Ty> vector, use the scalar as it is
   // not a legal vector type in LLT.
-  if (cast<VectorType>(U.getOperand(0)->getType())->getNumElements() == 1)
+  if (cast<FixedVectorType>(U.getOperand(0)->getType())->getNumElements() == 1)
     return translateCopy(U, *U.getOperand(0), MIRBuilder);
 
   Register Res = getOrCreateVReg(U);
@@ -2383,6 +2420,14 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
 
   // Make our arguments/constants entry block fallthrough to the IR entry block.
   EntryBB->addSuccessor(&getMBB(F.front()));
+
+  if (CLI->fallBackToDAGISel(F)) {
+    OptimizationRemarkMissed R("gisel-irtranslator", "GISelFailure",
+                               F.getSubprogram(), &F.getEntryBlock());
+    R << "unable to lower function: " << ore::NV("Prototype", F.getType());
+    reportTranslationError(*MF, *TPC, *ORE, R);
+    return false;
+  }
 
   // Lower the actual args into this basic block.
   SmallVector<ArrayRef<Register>, 8> VRegArgs;

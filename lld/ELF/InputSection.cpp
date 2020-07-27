@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <mutex>
 #include <set>
+#include <unordered_set>
 #include <vector>
 
 using namespace llvm;
@@ -389,11 +390,16 @@ template <class ELFT> void InputSection::copyShtGroup(uint8_t *buf) {
   // The first entry is not a section number but a flag.
   *to++ = from[0];
 
-  // Adjust section numbers because section numbers in an input object
-  // files are different in the output.
+  // Adjust section numbers because section numbers in an input object files are
+  // different in the output. We also need to handle combined or discarded
+  // members.
   ArrayRef<InputSectionBase *> sections = file->getSections();
-  for (uint32_t idx : from.slice(1))
-    *to++ = sections[idx]->getOutputSection()->sectionIndex;
+  std::unordered_set<uint32_t> seen;
+  for (uint32_t idx : from.slice(1)) {
+    OutputSection *osec = sections[idx]->getOutputSection();
+    if (osec && seen.insert(osec->sectionIndex).second)
+      *to++ = osec->sectionIndex;
+  }
 }
 
 InputSectionBase *InputSection::getRelocatedSection() const {
@@ -857,6 +863,12 @@ void InputSection::relocateNonAlloc(uint8_t *buf, ArrayRef<RelTy> rels) {
   const bool isDebugLocOrRanges =
       isDebug && (name == ".debug_loc" || name == ".debug_ranges");
   const bool isDebugLine = isDebug && name == ".debug_line";
+  Optional<uint64_t> tombstone;
+  for (const auto &patAndValue : llvm::reverse(config->deadRelocInNonAlloc))
+    if (patAndValue.first.match(this->name)) {
+      tombstone = patAndValue.second;
+      break;
+    }
 
   for (const RelTy &rel : rels) {
     RelType type = rel.getType(config->isMips64EL);
@@ -907,7 +919,8 @@ void InputSection::relocateNonAlloc(uint8_t *buf, ArrayRef<RelTy> rels) {
       continue;
     }
 
-    if (isDebug && (type == target->symbolicRel || expr == R_DTPREL)) {
+    if (tombstone ||
+        (isDebug && (type == target->symbolicRel || expr == R_DTPREL))) {
       // Resolve relocations in .debug_* referencing (discarded symbols or ICF
       // folded section symbols) to a tombstone value. Resolving to addend is
       // unsatisfactory because the result address range may collide with a
@@ -935,8 +948,11 @@ void InputSection::relocateNonAlloc(uint8_t *buf, ArrayRef<RelTy> rels) {
       auto *ds = dyn_cast<Defined>(&sym);
       if (!sym.getOutputSection() ||
           (ds && ds->section->repl != ds->section && !isDebugLine)) {
-        target->relocateNoSym(bufLoc, type,
-                              isDebugLocOrRanges ? UINT64_MAX - 1 : UINT64_MAX);
+        // If -z dead-reloc-in-nonalloc= is specified, respect it.
+        const uint64_t value =
+            tombstone ? SignExtend64<bits>(*tombstone)
+                      : (isDebugLocOrRanges ? UINT64_MAX - 1 : UINT64_MAX);
+        target->relocateNoSym(bufLoc, type, value);
         continue;
       }
     }

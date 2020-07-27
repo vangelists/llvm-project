@@ -14,6 +14,9 @@
 
 // ADDITIONAL_COMPILE_FLAGS: -D_LIBCPP_ABI_ENABLE_UNIQUE_PTR_TRIVIAL_ABI
 
+// There were assertion failures in both parse and codegen, which are fixed in clang 11.
+// UNSUPPORTED: gcc, clang-4, clang-5, clang-6, clang-7, clang-8, clang-9, clang-10
+
 #include <memory>
 #include <cassert>
 
@@ -41,8 +44,8 @@ struct C : Base {
   explicit C(char* buf, int* idx) : Base(buf, idx, 'C') {}
 };
 
-__attribute__((noinline)) void func(A a_struct, std::unique_ptr<B> b,
-                                    C c_struct) {
+__attribute__((noinline)) void func(A /*unused*/, std::unique_ptr<B> /*unused*/,
+                                    C /*unused*/) {
   call_something();
 }
 
@@ -50,7 +53,7 @@ int main(int, char**) {
   char shared_buf[3] = {'0', '0', '0'};
   int cur_idx = 0;
 
-  func(A(shared_buf, &cur_idx), std::make_unique<B>(shared_buf, &cur_idx),
+  func(A(shared_buf, &cur_idx), std::unique_ptr<B>(new B(shared_buf, &cur_idx)),
        C(shared_buf, &cur_idx));
 
   // With trivial_abi, the std::unique_ptr<B> arg is always destructed first.

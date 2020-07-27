@@ -12,6 +12,9 @@
 
 // ADDITIONAL_COMPILE_FLAGS: -D_LIBCPP_ABI_ENABLE_UNIQUE_PTR_TRIVIAL_ABI
 
+// There were assertion failures in both parse and codegen, which are fixed in clang 11.
+// UNSUPPORTED: gcc, clang-4, clang-5, clang-6, clang-7, clang-8, clang-9, clang-10
+
 #include <memory>
 #include <cassert>
 
@@ -24,7 +27,7 @@ struct Node {
   ~Node() { ++(*shared_val); }
 };
 
-__attribute__((noinline)) bool get_val(std::unique_ptr<Node> node) {
+__attribute__((noinline)) bool get_val(std::unique_ptr<Node> /*unused*/) {
   call_something();
   return true;
 }
@@ -42,7 +45,7 @@ int main(int, char**) {
   //
   // With trivial-abi, expect_1 will see shared == 1 because shared_val is
   // incremented before get_val returns.
-  expect_1(&shared, get_val(std::make_unique<Node>(&shared)));
+  expect_1(&shared, get_val(std::unique_ptr<Node>(new Node(&shared))));
 
   // Check that the shared-value is still 1.
   expect_1(&shared, true);

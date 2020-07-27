@@ -1552,11 +1552,12 @@ class Ext32Pat <SDNode ext> : GCNPat <
 def : Ext32Pat <zext>;
 def : Ext32Pat <anyext>;
 
-// The multiplication scales from [0,1] to the unsigned integer range
+// The multiplication scales from [0,1) to the unsigned integer range,
+// rounding down a bit to avoid unwanted overflow.
 def : GCNPat <
   (AMDGPUurecip i32:$src0),
   (V_CVT_U32_F32_e32
-    (V_MUL_F32_e32 (i32 CONST.FP_UINT_MAX_PLUS_1),
+    (V_MUL_F32_e32 (i32 CONST.FP_4294966784),
                    (V_RCP_IFLAG_F32_e32 (V_CVT_F32_U32_e32 $src0))))
 >;
 
@@ -2212,7 +2213,7 @@ def : GCNPat<
 
 def : GCNPat<
   (add i32:$src0, (i32 NegSubInlineConst32:$src1)),
-  (V_SUB_I32_e64 VS_32:$src0, NegSubInlineConst32:$src1)> {
+  (V_SUB_CO_U32_e64 VS_32:$src0, NegSubInlineConst32:$src1)> {
   let SubtargetPredicate = NotHasAddNoCarryInsts;
 }
 

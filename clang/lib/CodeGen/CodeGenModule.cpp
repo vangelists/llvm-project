@@ -222,14 +222,6 @@ void CodeGenModule::createOpenMPRuntime() {
       OpenMPRuntime.reset(new CGOpenMPRuntime(*this));
     break;
   }
-
-  // The OpenMP-IR-Builder should eventually replace the above runtime codegens
-  // but we are not there yet so they both reside in CGModule for now and the
-  // OpenMP-IR-Builder is opt-in only.
-  if (LangOpts.OpenMPIRBuilder) {
-    OMPBuilder.reset(new llvm::OpenMPIRBuilder(TheModule));
-    OMPBuilder->initialize();
-  }
 }
 
 void CodeGenModule::createCUDARuntime() {
@@ -1217,6 +1209,9 @@ void CodeGenModule::AddGlobalCtor(llvm::Function *Ctor, int Priority,
 /// when the module is unloaded.
 void CodeGenModule::AddGlobalDtor(llvm::Function *Dtor, int Priority) {
   if (CodeGenOpts.RegisterGlobalDtorsWithAtExit) {
+    if (getCXXABI().useSinitAndSterm())
+      llvm::report_fatal_error(
+          "register global dtors with atexit() is not supported yet");
     DtorsUsingAtExit[Priority].push_back(Dtor);
     return;
   }

@@ -66,16 +66,6 @@ TEST(ScalarTest, ComparisonFloat) {
   ASSERT_TRUE(s2 >= s1);
 }
 
-template <typename T1, typename T2>
-static T2 ConvertHost(T1 val, T2 (Scalar::*)(T2) const) {
-  return T2(val);
-}
-
-template <typename T1, typename T2>
-static T2 ConvertScalar(T1 val, T2 (Scalar::*conv)(T2) const) {
-  return (Scalar(val).*conv)(T2());
-}
-
 template <typename T> static void CheckConversion(T val) {
   SCOPED_TRACE("val = " + std::to_string(val));
   EXPECT_EQ((signed char)val, Scalar(val).SChar());
@@ -102,6 +92,20 @@ TEST(ScalarTest, Getters) {
   CheckConversion<unsigned long long>(0x8765432112345678ull);
   CheckConversion<float>(42.25f);
   CheckConversion<double>(42.25);
+  CheckConversion<long double>(42.25L);
+
+  EXPECT_EQ(APInt(128, 1) << 70, Scalar(std::pow(2.0f, 70.0f)).SInt128(APInt()));
+  EXPECT_EQ(APInt(128, -1, true) << 70,
+            Scalar(-std::pow(2.0f, 70.0f)).SInt128(APInt()));
+  EXPECT_EQ(APInt(128, 1) << 70,
+            Scalar(std::pow(2.0f, 70.0f)).UInt128(APInt()));
+  EXPECT_EQ(APInt(128, 0), Scalar(-std::pow(2.0f, 70.0f)).UInt128(APInt()));
+
+  EXPECT_EQ(APInt(128, 1) << 70, Scalar(std::pow(2.0, 70.0)).SInt128(APInt()));
+  EXPECT_EQ(APInt(128, -1, true) << 70,
+            Scalar(-std::pow(2.0, 70.0)).SInt128(APInt()));
+  EXPECT_EQ(APInt(128, 1) << 70, Scalar(std::pow(2.0, 70.0)).UInt128(APInt()));
+  EXPECT_EQ(APInt(128, 0), Scalar(-std::pow(2.0, 70.0)).UInt128(APInt()));
 }
 
 TEST(ScalarTest, RightShiftOperator) {
@@ -132,12 +136,8 @@ TEST(ScalarTest, GetBytes) {
   Scalar f_scalar;
   DataExtractor e_data(e, sizeof(e), endian::InlHostByteOrder(),
                        sizeof(void *));
-  Status e_error =
-      e_scalar.SetValueFromData(e_data, lldb::eEncodingUint, sizeof(e));
   DataExtractor f_data(f, sizeof(f), endian::InlHostByteOrder(),
                        sizeof(void *));
-  Status f_error =
-      f_scalar.SetValueFromData(f_data, lldb::eEncodingUint, sizeof(f));
   a_scalar.GetBytes(Storage);
   ASSERT_EQ(0, memcmp(&a, Storage, sizeof(a)));
   b_scalar.GetBytes(Storage);
@@ -146,12 +146,37 @@ TEST(ScalarTest, GetBytes) {
   ASSERT_EQ(0, memcmp(&c, Storage, sizeof(c)));
   d_scalar.GetBytes(Storage);
   ASSERT_EQ(0, memcmp(&d, Storage, sizeof(d)));
-  ASSERT_EQ(0, e_error.Fail());
+  ASSERT_THAT_ERROR(
+      e_scalar.SetValueFromData(e_data, lldb::eEncodingUint, sizeof(e))
+          .ToError(),
+      llvm::Succeeded());
   e_scalar.GetBytes(Storage);
   ASSERT_EQ(0, memcmp(e, Storage, sizeof(e)));
-  ASSERT_EQ(0, f_error.Fail());
+  ASSERT_THAT_ERROR(
+      f_scalar.SetValueFromData(f_data, lldb::eEncodingUint, sizeof(f))
+          .ToError(),
+      llvm::Succeeded());
   f_scalar.GetBytes(Storage);
   ASSERT_EQ(0, memcmp(f, Storage, sizeof(f)));
+}
+
+TEST(ScalarTest, SetValueFromData) {
+  uint8_t a[] = {1, 2, 3, 4};
+  Scalar s;
+  ASSERT_THAT_ERROR(
+      s.SetValueFromData(
+           DataExtractor(a, sizeof(a), lldb::eByteOrderLittle, sizeof(void *)),
+           lldb::eEncodingSint, sizeof(a))
+          .ToError(),
+      llvm::Succeeded());
+  EXPECT_EQ(0x04030201, s);
+  ASSERT_THAT_ERROR(
+      s.SetValueFromData(
+           DataExtractor(a, sizeof(a), lldb::eByteOrderBig, sizeof(void *)),
+           lldb::eEncodingSint, sizeof(a))
+          .ToError(),
+      llvm::Succeeded());
+  EXPECT_EQ(0x01020304, s);
 }
 
 TEST(ScalarTest, CastOperations) {
@@ -331,6 +356,20 @@ TEST(ScalarTest, SetValueFromCString) {
   EXPECT_THAT_ERROR(
       a.SetValueFromCString("-123", lldb::eEncodingUint, 8).ToError(),
       Failed());
+  EXPECT_THAT_ERROR(
+      a.SetValueFromCString("-2147483648", lldb::eEncodingSint, 4).ToError(),
+      Succeeded());
+  EXPECT_EQ(-2147483648, a);
+  EXPECT_THAT_ERROR(
+      a.SetValueFromCString("-2147483649", lldb::eEncodingSint, 4).ToError(),
+      Failed());
+  EXPECT_THAT_ERROR(
+      a.SetValueFromCString("47.25", lldb::eEncodingIEEE754, 4).ToError(),
+      Succeeded());
+  EXPECT_EQ(47.25f, a);
+  EXPECT_THAT_ERROR(
+      a.SetValueFromCString("asdf", lldb::eEncodingIEEE754, 4).ToError(),
+      Failed());
 }
 
 TEST(ScalarTest, APIntConstructor) {
@@ -362,7 +401,7 @@ TEST(ScalarTest, Scalar_512) {
 
   ASSERT_TRUE(S.MakeUnsigned());
   EXPECT_EQ(S.GetType(), Scalar::e_uint512);
-  ASSERT_STREQ(S.GetTypeAsCString(), "unsigned int512_t");
+  ASSERT_STREQ(S.GetTypeAsCString(), "uint512_t");
   ASSERT_STREQ(S.GetValueTypeAsCString(Scalar::e_uint512), "uint512_t");
   EXPECT_EQ(S.GetByteSize(), 64U);
 
