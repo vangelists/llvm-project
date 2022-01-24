@@ -206,7 +206,7 @@ public:
     Address m_pc; ///< The value of PC at the bookmarked tracepoint.
   };
 
-  using ΤracingBookmarkList =
+  using TracingBookmarkList =
       std::vector<std::reference_wrapper<const TracingBookmark>>;
 
   /// Broadcaster event bits definitions.
@@ -942,7 +942,7 @@ public:
   ///
   /// \return
   ///     A collection with references to all bookmarks.
-  ΤracingBookmarkList GetAllTracingBookmarks();
+  TracingBookmarkList GetAllTracingBookmarks();
 
   /// Restores the thread to the tracepoint marked by the bookmark with the
   /// provided unique ID.

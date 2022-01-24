@@ -2598,7 +2598,7 @@ protected:
         return false;
       }
     } else {
-      Thread::ΤracingBookmarkList bookmarks = thread.GetAllTracingBookmarks();
+      Thread::TracingBookmarkList bookmarks = thread.GetAllTracingBookmarks();
       if (!bookmarks.empty()) {
         stream.PutCString("Current bookmarks:\n");
         for (const Thread::TracingBookmark &bookmark : bookmarks) {

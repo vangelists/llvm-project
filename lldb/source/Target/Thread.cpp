@@ -2253,7 +2253,7 @@ Thread::GetTracingBookmarkAtTracepoint(TracepointID tracepoint_id) {
       GetBookmarkAtTracepoint(tracepoint_id);
 }
 
-Thread::ΤracingBookmarkList Thread::GetAllTracingBookmarks() {
+Thread::TracingBookmarkList Thread::GetAllTracingBookmarks() {
   return GetPlans().GetBasePlanInstructionTracer()->GetAllBookmarks();
 }
 
