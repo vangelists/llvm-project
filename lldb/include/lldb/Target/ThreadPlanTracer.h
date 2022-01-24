@@ -453,7 +453,7 @@ public:
   /// \return
   ///     A collection with references to all bookmarks.
   ///
-  Thread::ΤracingBookmarkList GetAllBookmarks() const;
+  Thread::TracingBookmarkList GetAllBookmarks() const;
 
   /// Restores the thread to the tracepoint marked by the bookmark with the
   /// provided unique ID.

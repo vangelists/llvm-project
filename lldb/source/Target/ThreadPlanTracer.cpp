@@ -1137,9 +1137,9 @@ ThreadPlanInstructionTracer::GetBookmarkAtTracepoint(
   return std::get<Thread::TracingBookmark>(*bookmark);
 }
 
-Thread::ΤracingBookmarkList
+Thread::TracingBookmarkList
 ThreadPlanInstructionTracer::GetAllBookmarks() const {
-  Thread::ΤracingBookmarkList bookmarks;
+  Thread::TracingBookmarkList bookmarks;
   bookmarks.reserve(m_bookmarks.size());
   for (const auto &[_, bookmark] : m_bookmarks) {
     bookmarks.push_back(bookmark);
